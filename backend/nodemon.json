@@ -1,0 +1,29 @@
+{
+  "watch": [
+    "server.js",
+    "routes",
+    "tally",
+    "config",
+    "logs/logger.js",
+    "syncState.js",
+    "syncChunkState.js",
+    "services"
+  ],
+  "ignore": [
+    "data/**",
+    "data/*.json",
+    "data/**/*.json",
+    "logs/*.log",
+    "*.log",
+    "node_modules/**",
+    "**/*.log",
+    "dist/**",
+    "electron-dist/**",
+    "erpToTallyScheduler.json",
+    "*.dat",
+    "*.bak",
+    "*.tmp"
+  ],
+  "ext": "js,mjs",
+  "delay": "1000"
+}

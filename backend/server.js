@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { config } from "./config/config.js";
 import router from "./routes/index.js";
+import licenseRoute from "./routes/licenseRoute.js";
 import { logger } from "./logs/logger.js";
 import {
   fetchTallyLedgers,
@@ -30,60 +31,71 @@ import {
   resetChunkProgress,
 } from "./syncChunkState.js";
 
+
+import { startErpToTallyScheduler } from "./tally/erpToTallySync.js";
+if (process.env.ERP_TO_TALLY_ENABLED === "true" && process.env.ERPNEXT_URL && !process.env.ERPNEXT_URL.includes("localhost:8000")) {
+  startErpToTallyScheduler(
+    { url: process.env.ERPNEXT_URL, apiKey: process.env.ERPNEXT_API_KEY, apiSecret: process.env.ERPNEXT_API_SECRET },
+    { companyName: process.env.TALLY_COMPANY_NAME || "Tally", intervalMs: 60000 }
+  );
+}
+
+
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 app.use("/api", router);
+app.use("/api", licenseRoute);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AUTO-SYNC CONFIG — persisted to data/auto_sync_config.json
 // Survives server restarts and nodemon reloads.
 // The user sets it via POST /api/auto-sync/configure.
 // ─────────────────────────────────────────────────────────────────────────────
-import fs   from "fs";
+import fs from "fs";
 import path from "path";
-import os   from "os";
+import os from "os";
 import { fileURLToPath } from "url";
 
-const __dirname      = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // DATA_DIR lives OUTSIDE the project folder so nodemon never watches it.
 // Default: a sibling folder "<project>-data" next to your project root.
 // Override by setting DATA_DIR in your .env file.
 // Always write to AppData — works in Electron, PKG exe, and dev.
 const DATA_DIR_DEFAULT = path.join(os.homedir(), "AppData", "Roaming", "TallyERPNextIntegration", "data");
-const CONFIG_DIR     = process.env.DATA_DIR || DATA_DIR_DEFAULT;
-const CONFIG_FILE    = path.join(CONFIG_DIR, "auto_sync_config.json");
-const CREDS_FILE     = path.join(CONFIG_DIR, "auto_sync_creds.json");  // gitignore this
+const CONFIG_DIR = process.env.DATA_DIR || DATA_DIR_DEFAULT;
+const CONFIG_FILE = path.join(CONFIG_DIR, "auto_sync_config.json");
+const CREDS_FILE = path.join(CONFIG_DIR, "auto_sync_creds.json");  // gitignore this
 
 const DEFAULT_CONFIG = {
-  enabled:       false,
+  enabled: false,
   // FIX: Read from .env instead of hardcoding 24h / 30 days.
   // Set AUTO_SYNC_INTERVAL_MINUTES and AUTO_SYNC_FROM_DAYS in your .env file.
-  intervalMs:    (parseInt(process.env.AUTO_SYNC_INTERVAL_MINUTES, 10) || 1440) * 60 * 1000,
+  intervalMs: (parseInt(process.env.AUTO_SYNC_INTERVAL_MINUTES, 10) || 1440) * 60 * 1000,
   intervalLabel: process.env.AUTO_SYNC_INTERVAL_MINUTES ? `${process.env.AUTO_SYNC_INTERVAL_MINUTES}m` : "daily",
   options: {
     syncChartOfAccounts: false,
-    syncLedgers:         true,
-    syncSmartLedgers:    false,
+    syncLedgers: true,
+    syncSmartLedgers: false,
     syncOpeningBalances: false,
-    syncGodowns:         false,
-    syncCostCentres:     false,
-    syncStock:           true,
-    syncVouchers:        true,
-    syncInvoices:        false,
-    syncTaxes:           false,
+    syncGodowns: false,
+    syncCostCentres: false,
+    syncStock: true,
+    syncVouchers: true,
+    syncInvoices: false,
+    syncTaxes: false,
   },
   creds: {
-    url:            "",
-    apiKey:         "",
-    apiSecret:      "",
+    url: "",
+    apiKey: "",
+    apiSecret: "",
     erpnextCompany: "",
   },
   companyName: "",
   // FIX: Read fromDays from .env — not hardcoded to 30
-  fromDays:    parseInt(process.env.AUTO_SYNC_FROM_DAYS, 10) || 30,
+  fromDays: parseInt(process.env.AUTO_SYNC_FROM_DAYS, 10) || 30,
 };
 
 function loadAutoSyncConfig() {
@@ -105,7 +117,7 @@ function loadAutoSyncConfig() {
       ...DEFAULT_CONFIG,
       ...saved,
       options: { ...DEFAULT_CONFIG.options, ...(saved.options || {}) },
-      creds:   { ...DEFAULT_CONFIG.creds, ...(saved.creds || {}), ...savedCreds },
+      creds: { ...DEFAULT_CONFIG.creds, ...(saved.creds || {}), ...savedCreds },
     };
   } catch (err) {
     logger.warn("Could not load auto-sync config — using defaults. (" + err.message + ")");
@@ -133,7 +145,7 @@ function _writeAutoSyncConfig() {
     const toSave = {
       ..._autoSyncConfig,
       creds: {
-        url:            _autoSyncConfig.creds.url,
+        url: _autoSyncConfig.creds.url,
         erpnextCompany: _autoSyncConfig.creds.erpnextCompany,
       },
     };
@@ -144,9 +156,9 @@ function _writeAutoSyncConfig() {
     // Add data/auto_sync_creds.json to your .gitignore
     if (_autoSyncConfig.creds.apiKey && _autoSyncConfig.creds.apiSecret) {
       const credsToSave = {
-        url:            _autoSyncConfig.creds.url,
-        apiKey:         _autoSyncConfig.creds.apiKey,
-        apiSecret:      _autoSyncConfig.creds.apiSecret,
+        url: _autoSyncConfig.creds.url,
+        apiKey: _autoSyncConfig.creds.apiKey,
+        apiSecret: _autoSyncConfig.creds.apiSecret,
         erpnextCompany: _autoSyncConfig.creds.erpnextCompany,
       };
       fs.writeFileSync(CREDS_FILE, JSON.stringify(credsToSave, null, 2), "utf8");
@@ -160,11 +172,11 @@ function _writeAutoSyncConfig() {
 // across nodemon restarts and production server restarts
 let _autoSyncConfig = loadAutoSyncConfig();
 
-let _autoSyncTimer   = null;   // setInterval handle
-let _syncRunning     = false;  // concurrency guard
-let _lastAutoSync    = null;
+let _autoSyncTimer = null;   // setInterval handle
+let _syncRunning = false;  // concurrency guard
+let _lastAutoSync = null;
 const _lastSyncByCompany = {}; // { companyName: lastSyncResult }   // last run result, served by /status
-let _nextRunAt       = null;   // timestamp of next scheduled run, exposed in /status
+let _nextRunAt = null;   // timestamp of next scheduled run, exposed in /status
 let _autoSyncRunCount = 0;     // monotonically incrementing run counter for log messages
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -203,19 +215,19 @@ async function runAutoSync(triggeredBy = "interval") {
   _autoSyncRunCount++;
   const _runNum = _autoSyncRunCount;
 
-  const now    = new Date();
+  const now = new Date();
   const toDate = now.toISOString().slice(0, 10);
 
   // Merge runtime creds with .env fallbacks — identical to manual sync
   const effectiveCreds = {
-    url:            erpUrl,
-    apiKey:         erpKey,
-    apiSecret:      creds.apiSecret || config.erpnext.apiSecret,
+    url: erpUrl,
+    apiKey: erpKey,
+    apiSecret: creds.apiSecret || config.erpnext.apiSecret,
     erpnextCompany: creds.erpnextCompany || "",
   };
 
-  const erpnextUrl  = effectiveCreds.url || "default";
-  const state       = getCompanyState(companyName, erpnextUrl);
+  const erpnextUrl = effectiveCreds.url || "default";
+  const state = getCompanyState(companyName, erpnextUrl);
   const isFirstSync = !state.lastVoucherSyncDate && !state.lastMasterSyncAt;
 
   // ── Determine fallback fromDate for first-ever sync ───────────────────────
@@ -256,29 +268,29 @@ async function runAutoSync(triggeredBy = "interval") {
     fallbackFromDate = d.toISOString().slice(0, 10);
   }
 
-logger.resetLastSeenCompany(companyName);   // ← seed company BEFORE any logs
-// ── Log the trigger so Live Logs shows the run starting immediately ──
-logger.human.autoSyncTriggered(companyName, _autoSyncConfig.intervalLabel, _runNum);
-logger.human.syncStarted(companyName, effectiveCreds.url);
+  logger.resetLastSeenCompany(companyName);   // ← seed company BEFORE any logs
+  // ── Log the trigger so Live Logs shows the run starting immediately ──
+  logger.human.autoSyncTriggered(companyName, _autoSyncConfig.intervalLabel, _runNum);
+  logger.human.syncStarted(companyName, effectiveCreds.url);
 
 
   _lastAutoSync = {
-    startedAt:    now.toISOString(),
-    status:       "running",
-    company:      companyName,
+    startedAt: now.toISOString(),
+    status: "running",
+    company: companyName,
     triggeredBy,
-    fromDate:     state.lastVoucherSyncDate || fallbackFromDate,
+    fromDate: state.lastVoucherSyncDate || fallbackFromDate,
     toDate,
     isIncremental: !isFirstSync,
   };
 
   try {
     // ── 1. MASTERS — fetch all, sync only changed (same as manual) ──────────
-    let groups      = [];
+    let groups = [];
     let costCentres = [];
-    let godowns     = [];
-    let ledgers     = [];
-    let stockItems  = [];
+    let godowns = [];
+    let ledgers = [];
+    let stockItems = [];
 
     if (options.syncChartOfAccounts || options.syncOpeningBalances) {
       logger.human.syncStepStarting("Chart of Accounts — reading account groups from Tally");
@@ -344,14 +356,14 @@ logger.human.syncStarted(companyName, effectiveCreds.url);
     // ── 2. VOUCHERS — incremental or first-sync chunked ─────────────────────
     let vouchers = [];
     if (options.syncVouchers || options.syncInvoices || options.syncSmartLedgers) {
-      const fullSyncDone  = isFullSyncComplete(companyName, erpnextUrl);
+      const fullSyncDone = isFullSyncComplete(companyName, erpnextUrl);
       const needsFullSync = isFirstSync || !fullSyncDone;
 
       if (needsFullSync) {
         // First sync — fetch ALL vouchers in monthly chunks, resumable
         // Use company start date already resolved above in fallbackFromDate
         const chunkFrom = fallbackFromDate;
-        const chunkTo   = toDate;
+        const chunkTo = toDate;
         logger.human.syncStepStarting(`Vouchers (FIRST SYNC) — reading monthly chunks from ${chunkFrom} to ${chunkTo}`);
         vouchers = await fetchTallyVouchersChunked(
           companyName,
@@ -392,7 +404,7 @@ logger.human.syncStarted(companyName, effectiveCreds.url);
       // This prevents the date advancing when 0 vouchers matched the window,
       // which would cause all future runs to also get 0 vouchers (stale window).
       const voucherStepOk = result.steps?.vouchers?.status === "ok" ||
-                            result.steps?.vouchers?.status === "uptodate";
+        result.steps?.vouchers?.status === "uptodate";
       const vouchersWereRequested = options.syncVouchers || options.syncInvoices || options.syncSmartLedgers;
       const shouldSaveVoucherDate = !vouchersWereRequested || voucherStepOk || vouchers.length > 0;
 
@@ -404,7 +416,7 @@ logger.human.syncStarted(companyName, effectiveCreds.url);
       logger.human.stateSaved(companyName);
 
       // If this was the first full chunked sync, mark it complete so next run is incremental
-      const fullSyncDone  = isFullSyncComplete(companyName, erpnextUrl);
+      const fullSyncDone = isFullSyncComplete(companyName, erpnextUrl);
       const needsFullSync = isFirstSync || !fullSyncDone;
       if (needsFullSync && (options.syncVouchers || options.syncInvoices)) {
         markFullSyncComplete(companyName, erpnextUrl);
@@ -419,14 +431,14 @@ logger.human.syncStarted(companyName, effectiveCreds.url);
 
     _lastAutoSync = {
       ...result,
-      steps:        result.steps || {},
+      steps: result.steps || {},
       triggeredBy,
-      runNumber:    _runNum,
-      fromDate:     state.lastVoucherSyncDate || fallbackFromDate,
+      runNumber: _runNum,
+      fromDate: state.lastVoucherSyncDate || fallbackFromDate,
       toDate,
       isIncremental: !isFirstSync,
-      startedAt:    now.toISOString(),
-      finishedAt:   new Date().toISOString(),
+      startedAt: now.toISOString(),
+      finishedAt: new Date().toISOString(),
     };
 
     logger.human.syncDone(
@@ -445,11 +457,11 @@ logger.human.syncStarted(companyName, effectiveCreds.url);
 
   } catch (err) {
     _lastAutoSync = {
-      status:    "failed",
-      error:     err.message,
+      status: "failed",
+      error: err.message,
       startedAt: now.toISOString(),
-      company:   companyName,
-      fromDate:  state.lastVoucherSyncDate || fallbackFromDate,
+      company: companyName,
+      fromDate: state.lastVoucherSyncDate || fallbackFromDate,
       toDate,
       triggeredBy,
     };
@@ -531,13 +543,13 @@ app.post("/api/auto-sync/configure", (req, res) => {
   if (body.interval !== undefined) {
     const PRESETS = {
       // UI button labels → minutes
-      "15 min": 15,  "15min": 15,  "15m": 15,
-      "30 min": 30,  "30min": 30,  "30m": 30,
-      "1 hour": 60,  "1hour": 60,  "1h": 60,
+      "15 min": 15, "15min": 15, "15m": 15,
+      "30 min": 30, "30min": 30, "30m": 30,
+      "1 hour": 60, "1hour": 60, "1h": 60,
       "2 hours": 120, "2h": 120,
       "4 hours": 240, "4h": 240,
       "8 hours": 480, "8h": 480,
-      "daily":  1440, "24h": 1440, "1 day": 1440,
+      "daily": 1440, "24h": 1440, "1 day": 1440,
     };
     const raw = String(body.interval).trim().toLowerCase();
     let minutes;
@@ -555,9 +567,9 @@ app.post("/api/auto-sync/configure", (req, res) => {
     }
   }
 
-  if (body.enabled      !== undefined) _autoSyncConfig.enabled     = !!body.enabled;
-  if (body.companyName  !== undefined) _autoSyncConfig.companyName = body.companyName.trim();
-  if (body.fromDays     !== undefined) _autoSyncConfig.fromDays    = parseInt(body.fromDays, 10) || 30;
+  if (body.enabled !== undefined) _autoSyncConfig.enabled = !!body.enabled;
+  if (body.companyName !== undefined) _autoSyncConfig.companyName = body.companyName.trim();
+  if (body.fromDays !== undefined) _autoSyncConfig.fromDays = parseInt(body.fromDays, 10) || 30;
 
   if (body.options && typeof body.options === "object") {
     _autoSyncConfig.options = { ..._autoSyncConfig.options, ...body.options };
@@ -585,11 +597,11 @@ app.post("/api/auto-sync/configure", (req, res) => {
   persistAutoSyncConfig();
 
   res.json({
-    ok:      true,
+    ok: true,
     message: _autoSyncConfig.enabled
       ? `Auto-sync enabled — runs every ${_autoSyncConfig.intervalLabel}`
       : "Auto-sync configured but not enabled (set enabled: true to start)",
-    config:  _safeConfig(),
+    config: _safeConfig(),
   });
 });
 
@@ -600,25 +612,25 @@ app.post("/api/auto-sync/configure", (req, res) => {
 app.get("/api/auto-sync/status", (req, res) => {
   const requestedCompany = req.query.company || _autoSyncConfig.companyName;
   // Check completed jobs for this company
-let lastManual = null;
-try {
-  const syncJobs = globalThis._syncJobs;
-  if (syncJobs) {
-    const completed = Array.from(syncJobs.values())
-      .filter(j => j.status === "done" && j.result?.steps)
-      .sort((a, b) => new Date(b.finishedAt) - new Date(a.finishedAt));
-    lastManual = completed[0]?.result || null;
-  }
-} catch(_) {}
+  let lastManual = null;
+  try {
+    const syncJobs = globalThis._syncJobs;
+    if (syncJobs) {
+      const completed = Array.from(syncJobs.values())
+        .filter(j => j.status === "done" && j.result?.steps)
+        .sort((a, b) => new Date(b.finishedAt) - new Date(a.finishedAt));
+      lastManual = completed[0]?.result || null;
+    }
+  } catch (_) { }
 
-const lastSync = _lastSyncByCompany[requestedCompany]
+  const lastSync = _lastSyncByCompany[requestedCompany]
     || (globalThis._lastSyncByCompany?.[requestedCompany])
     || _lastAutoSync
     || lastManual
     || null;
   res.json({
-    config:    _safeConfig(),
-    running:   _syncRunning,
+    config: _safeConfig(),
+    running: _syncRunning,
     lastSync,
     nextRunIn: _autoSyncConfig.enabled && _autoSyncTimer
       ? `up to ${_autoSyncConfig.intervalLabel}`
@@ -647,7 +659,7 @@ app.post("/api/auto-sync/run-now", async (_req, res) => {
 app.post("/api/auto-sync/enable", (_req, res) => {
   _autoSyncConfig.enabled = true;
   startScheduler();
-  const what = Object.entries(_autoSyncConfig.options).filter(([,v])=>v).map(([k])=>k).join(", ");
+  const what = Object.entries(_autoSyncConfig.options).filter(([, v]) => v).map(([k]) => k).join(", ");
   logger.human.autoSyncEnabled(_autoSyncConfig.intervalLabel, what);
   persistAutoSyncConfig();
   res.json({ ok: true, message: `Auto-sync enabled — runs every ${_autoSyncConfig.intervalLabel}` });
@@ -690,13 +702,13 @@ app.get("/api/auto-sync/state", (req, res) => {
 // Strip secrets from config before sending to client
 function _safeConfig() {
   return {
-    enabled:       _autoSyncConfig.enabled,
-    interval:      _autoSyncConfig.intervalLabel,
-    intervalMs:    _autoSyncConfig.intervalMs,
-    companyName:   _autoSyncConfig.companyName,
-    fromDays:      _autoSyncConfig.fromDays,
-    options:       _autoSyncConfig.options,
-    erpnextUrl:    _autoSyncConfig.creds.url || config.erpnext.url || "",
+    enabled: _autoSyncConfig.enabled,
+    interval: _autoSyncConfig.intervalLabel,
+    intervalMs: _autoSyncConfig.intervalMs,
+    companyName: _autoSyncConfig.companyName,
+    fromDays: _autoSyncConfig.fromDays,
+    options: _autoSyncConfig.options,
+    erpnextUrl: _autoSyncConfig.creds.url || config.erpnext.url || "",
     erpnextCompany: _autoSyncConfig.creds.erpnextCompany || "",
     // Never expose apiKey / apiSecret
   };
@@ -710,7 +722,7 @@ if (_autoSyncConfig.enabled) {
 }
 
 
- 
+
 // ── Serve bundled React frontend ─────────────────────────────────────────────────────
 // In the EXE, the frontend-build folder sits next to the executable.
 // process.pkg is set by pkg at runtime; falls back to __dirname for dev.
@@ -737,10 +749,7 @@ if (fs.existsSync(FRONTEND_BUILD)) {
 }
 
 app.listen(config.port, () => {
-  logger.human.serverReady(`http://localhost:${config.port}`, {
-    enabled  : _autoSyncConfig.enabled,
-    interval : _autoSyncConfig.intervalLabel,
-  });
+  // logger.human.serverReady removed
   logger.human.tallyConnected(config.tally.url);
   logger.human.checkReady();
   if (!_autoSyncConfig.enabled) {
@@ -749,3 +758,4 @@ app.listen(config.port, () => {
     );
   }
 });
+// Trigger restart

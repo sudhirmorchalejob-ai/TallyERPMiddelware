@@ -16,4 +16,5 @@ dist/logs/
 dist/data/
 
 backend/.env
-*.docx
+*.docx.env
+frontend/.env 

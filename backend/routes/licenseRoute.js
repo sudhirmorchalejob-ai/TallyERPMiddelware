@@ -1,32 +1,33 @@
-// routes/licenseRoute.js  — add this to your Express app
-// Usage: app.use('/api', require('./routes/licenseRoute'));
+import { Router } from "express";
+import { validateLicense } from "../services/lmsService.js";
 
-const express   = require('express');
-const router    = express.Router();
-const { validateLicense } = require('../services/lmsService'); // your existing LMS service
+const router = Router();
 
 /**
  * POST /api/license/verify-email
  * Body: { email }
- * Returns: { valid, plan, endDate, customerEmail }
+ * Returns: { valid, plan, endDate, customerEmail, features, reason }
  */
-router.post('/license/verify-email', async (req, res) => {
+router.post("/license/verify-email", async (req, res) => {
   const { email } = req.body;
-  if (!email) return res.status(400).json({ valid: false, reason: 'Email required' });
+  if (!email) {
+    return res.status(400).json({ valid: false, reason: "Email required" });
+  }
 
   try {
     const result = await validateLicense(email.trim().toLowerCase());
-    // Only send what the frontend needs — never expose licenseId/keys to browser
+    // Only send what the frontend needs — never expose secret license keys to browser
     res.json({
-      valid        : result.valid,
-      plan         : result.plan,
-      endDate      : result.endDate,
+      valid: result.valid,
+      plan: result.plan,
+      endDate: result.endDate,
       customerEmail: result.customerEmail,
-      reason       : result.reason || null,
+      features: result.features || {},
+      reason: result.reason || null,
     });
   } catch (e) {
     res.status(500).json({ valid: false, reason: e.message });
   }
 });
 
-module.exports = router;
+export default router;

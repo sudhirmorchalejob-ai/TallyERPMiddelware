@@ -69,10 +69,22 @@ function cleanVal(s) {
 
 function extractAddress(addr) {
   if (!addr) return null;
-  if (Array.isArray(addr))
-    return addr.map((a) => (typeof a === "object" ? a._ : a)).filter(Boolean).join(", ");
-  if (typeof addr === "object" && addr._) return addr._;
-  return String(addr);
+  if (Array.isArray(addr)) {
+    const parts = addr.map((a) => extractAddress(a)).filter(Boolean);
+    return parts.length ? parts.join(", ") : null;
+  }
+  if (typeof addr === "object") {
+    if (addr.ADDRESS) return extractAddress(addr.ADDRESS);
+    if (addr["ADDRESS.LIST"]) return extractAddress(addr["ADDRESS.LIST"]);
+    if (addr._) return String(addr._).trim();
+    const vals = Object.values(addr)
+      .map((v) => (typeof v === "string" ? v.trim() : v?._ ? String(v._).trim() : null))
+      .filter(Boolean);
+    if (vals.length) return vals.join(", ");
+    return null;
+  }
+  const str = String(addr).trim();
+  return str && str !== "[object Object]" ? str : null;
 }
 
 function extractPhone(blob) {
@@ -129,9 +141,9 @@ function parseTallyAmountSigned(raw) {
     if (isNaN(n) || n === 0) return 0;
     // Determine sign from $ attributes — try TYPE, then ISDEEMEDPOSITIVE, then DR flag
     const attrs = raw.$ || {};
-    const type  = (attrs.TYPE || attrs.type || "").trim().toLowerCase();
-    const isDr  = type === "dr" || type === "debit" ||
-                  (attrs.ISDEEMEDPOSITIVE || "").toLowerCase() === "no";
+    const type = (attrs.TYPE || attrs.type || "").trim().toLowerCase();
+    const isDr = type === "dr" || type === "debit" ||
+      (attrs.ISDEEMEDPOSITIVE || "").toLowerCase() === "no";
     // If no attribute found, fall back to the sign of n (Form A inside object)
     if (type || attrs.ISDEEMEDPOSITIVE) {
       return isDr ? -Math.abs(n) : Math.abs(n);
@@ -214,7 +226,7 @@ export async function pingTally() {
   const start = Date.now();
   try {
     const raw = await postXml(xml);
-    
+
     const latencyMs = Date.now() - start;
     if (!raw || typeof raw !== "string") throw new Error("Empty response from Tally");
     return { connected: true, latencyMs, url: config.tally.url };
@@ -305,7 +317,7 @@ export async function fetchTallyLedgers(companyName) {
   const xml = buildCollectionXml(
     "Ledger Collection",
     "Ledger",
-    "NAME,GUID,PARENT,ALTERID,ADDRESS,ADDRESS.LISTADDRESS.LIST.STATENAME,ADDRESS.LIST.PINCODE,MAILINGNAME,MAILINGDETAILS.LIST,MAILINGDETAILS.LIST.STATENAME,MAILINGDETAILS.LIST.PINCODE,MAILINGDETAILS.LIST.COUNTRYNAME,STATE,STATENAME,OPENINGBALANCE,CLOSINGBALANCE,ISBILLWISEON,LEDGERPHONE,LEDGERMOBILE,EMAIL,INCOMETAXNUMBER,PARTYGSTIN,LEDGSTREGDETAILS.LIST,COUNTRYNAME,PINCODE,BANKDETAILS,BANKDETAILS.LIST,IFSCODE,SWIFTCODE,BANKINGCONFIGBANK,BANKACCHOLDERNAME,BRANCHNAME,BANKBSRCODE,MSMEREGISTRATIONDETAILS.LIST.MSMEENTERPRISETYPE,MSMEREGISTRATIONDETAILS.LIST.UDYAMREGISTRATIONNUMBER,MSMEREGISTRATIONDETAILS.LIST.MSMEACTIVITYTYPE,CREDITLIMIT,ISCREDITCHECK,CREDITDAYS,ISOVERRIDECREDITLIMIT,LANGUAGENAME.LIST,LANGUAGENAME.LIST.LANGUAGEALIASLABEL,UPIID,ACCOUNTNUMBER,BANKNAME,TRANSACTIONTYPE",
+    "NAME,GUID,PARENT,ALTERID,ADDRESS,ADDRESS.LIST,ADDRESS.LIST.STATENAME,ADDRESS.LIST.PINCODE,MAILINGNAME,MAILINGDETAILS.LIST,MAILINGDETAILS.LIST.STATENAME,MAILINGDETAILS.LIST.PINCODE,MAILINGDETAILS.LIST.COUNTRYNAME,STATE,STATENAME,OPENINGBALANCE,CLOSINGBALANCE,ISBILLWISEON,LEDGERPHONE,LEDGERMOBILE,EMAIL,INCOMETAXNUMBER,PARTYGSTIN,LEDGSTREGDETAILS.LIST,COUNTRYNAME,PINCODE,BANKDETAILS,BANKDETAILS.LIST,IFSCODE,SWIFTCODE,BANKINGCONFIGBANK,BANKACCHOLDERNAME,BRANCHNAME,BANKBSRCODE,MSMEREGISTRATIONDETAILS.LIST.MSMEENTERPRISETYPE,MSMEREGISTRATIONDETAILS.LIST.UDYAMREGISTRATIONNUMBER,MSMEREGISTRATIONDETAILS.LIST.MSMEACTIVITYTYPE,CREDITLIMIT,ISCREDITCHECK,CREDITDAYS,ISOVERRIDECREDITLIMIT,LANGUAGENAME.LIST,LANGUAGENAME.LIST.LANGUAGEALIASLABEL,UPIID,ACCOUNTNUMBER,BANKNAME,TRANSACTIONTYPE",
     companyName
   );
   const raw = await postXml(xml);
@@ -321,11 +333,11 @@ export async function fetchTallyLedgers(companyName) {
   const ledgers = [];
   for (const l of ledgersArr) {
 
-   
+
 
 
     const name = l.$?.NAME || val(l.NAME) || null;
-    
+
     const guid = val(l.GUID) || null;
     if (!name || !guid) continue;
 
@@ -339,7 +351,7 @@ export async function fetchTallyLedgers(companyName) {
     // If a client's Tally has custom fields (e.g. CREDITLIMIT, TRANSPORTERNAME),
     // they arrive as extra XML keys. We collect them here so they are not silently
     // lost — Erpnextclient.js will map them to custom_* fields in ERPNext.
-const KNOWN_LEDGER_KEYS = new Set([
+    const KNOWN_LEDGER_KEYS = new Set([
       "$", "GUID", "NAME", "PARENT", "ALTERID", "ADDRESS", "MAILINGNAME",
       "MAILINGDETAILS.LIST", "MAILINGDETAILS", "OPENINGBALANCE", "CLOSINGBALANCE",
       "ISBILLWISEON", "LEDGERPHONE", "LEDGERMOBILE", "EMAIL", "INCOMETAXNUMBER",
@@ -349,17 +361,17 @@ const KNOWN_LEDGER_KEYS = new Set([
       "MSMEREGISTRATIONDETAILS.LIST.ENTERPRISETYPE",
       "MSMEREGISTRATIONDETAILS.LIST.UDYAMREGNUMBER",
       "MSMEREGISTRATIONDETAILS.LIST.MSMEACTIVITYTYPE",
-     "CREDITLIMIT",
-"CREDITPERIOD",
-"ISCREDITCHECK",
-"ISOVERRIDECREDITLIMIT", 
- "ALIAS", 
- "LANGUAGEINFOLIST.LIST",
-"LANGUAGEINFOLIST.LIST.LANGUAGEALIASLABEL",
-"ADDRESS.LIST",
-"LANGUAGENAME.LIST",   
-"BANKDETAILS.LIST",
-    
+      "CREDITLIMIT",
+      "CREDITPERIOD",
+      "ISCREDITCHECK",
+      "ISOVERRIDECREDITLIMIT",
+      "ALIAS",
+      "LANGUAGEINFOLIST.LIST",
+      "LANGUAGEINFOLIST.LIST.LANGUAGEALIASLABEL",
+      "ADDRESS.LIST",
+      "LANGUAGENAME.LIST",
+      "BANKDETAILS.LIST",
+
     ]);
     const customFields = {};
     for (const key of Object.keys(l)) {
@@ -370,12 +382,68 @@ const KNOWN_LEDGER_KEYS = new Set([
         }
       }
     }
-    
-  
+
+
+
+
+
+    // Extract placeOfSupply for fallback state
+    let placeOfSupply = (() => {
+      const reg = l["LEDGSTREGDETAILS.LIST"];
+      if (!reg) return null;
+      const arr = Array.isArray(reg) ? reg : [reg];
+      for (const item of arr) {
+        if (!item) continue;
+        const v = val(item.PLACEOFSUPPLY);
+        if (v && v.trim()) return v.trim();
+      }
+      return null;
+    })();
+
+    // Address extraction with fallbacks from ADDRESS, ADDRESS.LIST, MAILINGDETAILS.LIST
+    let addr = extractAddress(l.ADDRESS);
+    let state = val(l.STATENAME) || val(l.STATE) || null;
+    let country = val(l.COUNTRYNAME) || val(l.COUNTRYOFRESIDENCE) || null;
+    let pincode = val(l.PINCODE) || null;
+
+    if (!state && placeOfSupply) {
+      state = placeOfSupply;
+    }
+
+    // Check ADDRESS.LIST
+    if (l["ADDRESS.LIST"]) {
+      if (!addr) addr = extractAddress(l["ADDRESS.LIST"]);
+      const aList = Array.isArray(l["ADDRESS.LIST"]) ? l["ADDRESS.LIST"] : [l["ADDRESS.LIST"]];
+      for (const a of aList) {
+        if (!a) continue;
+        if (!state && a.STATENAME) state = val(a.STATENAME);
+        if (!country && a.COUNTRYNAME) country = val(a.COUNTRYNAME);
+        if (!pincode && a.PINCODE) pincode = val(a.PINCODE);
+      }
+    }
+
+    // Check MAILINGDETAILS.LIST
+    const mListRaw = l["MAILINGDETAILS.LIST"];
+    if (mListRaw) {
+      const mList = Array.isArray(mListRaw) ? mListRaw : [mListRaw];
+      for (const m of mList) {
+        if (!m) continue;
+        if (!addr && m.ADDRESS) addr = extractAddress(m.ADDRESS);
+        if (!addr && m["ADDRESS.LIST"]) addr = extractAddress(m["ADDRESS.LIST"]);
+        if (!state && m.STATENAME) state = val(m.STATENAME);
+        if (!country && m.COUNTRYNAME) country = val(m.COUNTRYNAME);
+        if (!pincode && m.PINCODE) pincode = val(m.PINCODE);
+      }
+    }
 
 
 
     ledgers.push({
+      address: addr,
+      state: state,
+      country: country,
+      pincode: pincode,
+      placeOfSupply: placeOfSupply,
       guid,
       name,
       alterId: val(l.ALTERID) || null,
@@ -433,534 +501,361 @@ const KNOWN_LEDGER_KEYS = new Set([
         return null;
       })(),
 
-registrationType: (() => {
-  const reg = l["LEDGSTREGDETAILS.LIST"];
-  if (!reg) return null;
+      registrationType: (() => {
+        const reg = l["LEDGSTREGDETAILS.LIST"];
+        if (!reg) return null;
 
-  const arr = Array.isArray(reg)
-    ? reg
-    : [reg];
+        const arr = Array.isArray(reg)
+          ? reg
+          : [reg];
 
-  for (const item of arr) {
-    if (!item) continue;
+        for (const item of arr) {
+          if (!item) continue;
 
-    const v =
-      val(item.GSTREGISTRATIONTYPE) ||
-      val(item.REGISTRATIONTYPE);
+          const v =
+            val(item.GSTREGISTRATIONTYPE) ||
+            val(item.REGISTRATIONTYPE);
 
-    if (v && v.trim()) {
-      return v.trim();
-    }
-  }
+          if (v && v.trim()) {
+            return v.trim();
+          }
+        }
 
-  return null;
-})(),
-
-placeOfSupply: (() => {
-  const reg = l["LEDGSTREGDETAILS.LIST"];
-  if (!reg) return null;
-
-  const arr = Array.isArray(reg)
-    ? reg
-    : [reg];
-
-  for (const item of arr) {
-    if (!item) continue;
-
-    const v =
-      val(item.PLACEOFSUPPLY) ||
-      val(item.PPLACEOFSUPPLY);
-
-    if (v && v.trim()) {
-      return v.trim();
-    }
-  }
-
-  return null;
-})(),
-
-
-placeOfSupply: (() => {
-  const gst = l["LEDGSTREGDETAILS.LIST"];
-  if (!gst) return null;
-
-  const arr = Array.isArray(gst)
-    ? gst
-    : [gst];
-
-  for (const item of arr) {
-    if (!item) continue;
-
-    const place =
-      val(item.PLACEOFSUPPLY) ||
-      val(item.PPLACEOFSUPPLY);
-
-    if (place && place.trim()) {
-      return place.trim();
-    }
-  }
-
-  return null;
-})(),
+        return null;
+      })(),
 
 
 
-isTransporter: (() => {
-  const gst = l["LEDGSTREGDETAILS.LIST"];
-  if (!gst) return "Undefined";
 
-  const arr = Array.isArray(gst)
-    ? gst
-    : [gst];
 
-  for (const item of arr) {
-    if (!item) continue;
 
-    const v = val(item.ISTRANSPORTER);
+      isTransporter: (() => {
+        const gst = l["LEDGSTREGDETAILS.LIST"];
+        if (!gst) return "Undefined";
 
-    if (v && v.trim()) {
-      return v.trim();
-    }
-  }
+        const arr = Array.isArray(gst)
+          ? gst
+          : [gst];
 
-  return "Undefined";
-})(),
+        for (const item of arr) {
+          if (!item) continue;
 
-transporterId: (() => {
-  const gst = l["LEDGSTREGDETAILS.LIST"];
-  if (!gst) return "Undefined";
+          const v = val(item.ISTRANSPORTER);
 
-  const arr = Array.isArray(gst)
-    ? gst
-    : [gst];
+          if (v && v.trim()) {
+            return v.trim();
+          }
+        }
 
-  for (const item of arr) {
-    if (!item) continue;
+        return "Undefined";
+      })(),
 
-    const v = val(item.TRANSPORTERID);
+      transporterId: (() => {
+        const gst = l["LEDGSTREGDETAILS.LIST"];
+        if (!gst) return "Undefined";
 
-    if (v && v.trim()) {
-      return v.trim();
-    }
-  }
+        const arr = Array.isArray(gst)
+          ? gst
+          : [gst];
 
-  return "Undefined";
-})(),
+        for (const item of arr) {
+          if (!item) continue;
 
-bankTransactionType: (() => {
-  const b =
-    l["BANKDETAILS.LIST"] ||
-    l.BANKDETAILS ||
-    {};
+          const v = val(item.TRANSPORTERID);
 
-  return (
-    val(b.TRANSACTIONTYPE) ||
-    null
-  );
-})(),
+          if (v && v.trim()) {
+            return v.trim();
+          }
+        }
 
-bankDetailsRaw: (() => {
-  return l["BANKDETAILS.LIST"] || null;
-})(),
+        return "Undefined";
+      })(),
 
-upiId: (() => {
-  const b =
-    l["BANKDETAILS.LIST"] ||
-    l.BANKDETAILS ||
-    {};
+      bankTransactionType: (() => {
+        const b =
+          l["BANKDETAILS.LIST"] ||
+          l.BANKDETAILS ||
+          {};
 
-  return (
-    val(b.UPIID) ||
-    null
-  );
-})(),
+        return (
+          val(b.TRANSACTIONTYPE) ||
+          null
+        );
+      })(),
 
-popupBankAccountNo: (() => {
-  const b =
-    l["BANKDETAILS.LIST"] ||
-    l.BANKDETAILS ||
-    {};
+      bankDetailsRaw: (() => {
+        return l["BANKDETAILS.LIST"] || null;
+      })(),
 
-  return (
-    val(b.ACCOUNTNUMBER) ||
-    val(b.ACNO) ||
-    null
-  );
-})(),
+      upiId: (() => {
+        const b =
+          l["BANKDETAILS.LIST"] ||
+          l.BANKDETAILS ||
+          {};
 
-popupIfscCode: (() => {
-  const b =
-    l["BANKDETAILS.LIST"] ||
-    l.BANKDETAILS ||
-    {};
+        return (
+          val(b.UPIID) ||
+          null
+        );
+      })(),
 
-  return (
-    val(b.IFSCODE) ||
-    null
-  );
-})(),
+      popupBankAccountNo: (() => {
+        const b =
+          l["BANKDETAILS.LIST"] ||
+          l.BANKDETAILS ||
+          {};
 
-popupBankName: (() => {
-  const b =
-    l["BANKDETAILS.LIST"] ||
-    l.BANKDETAILS ||
-    {};
+        return (
+          val(b.ACCOUNTNUMBER) ||
+          val(b.ACNO) ||
+          null
+        );
+      })(),
 
-  return (
-    val(b.BANKNAME) ||
-    null
-  );
-})(),
+      popupIfscCode: (() => {
+        const b =
+          l["BANKDETAILS.LIST"] ||
+          l.BANKDETAILS ||
+          {};
 
-  state: (() => {
-  const possible = [];
+        return (
+          val(b.IFSCODE) ||
+          null
+        );
+      })(),
 
-  // 1. Direct top-level fields (usually company state, but try anyway)
-  possible.push(val(l.STATENAME), val(l.STATE), val(l.LEDSTATENAME));
+      popupBankName: (() => {
+        const b =
+          l["BANKDETAILS.LIST"] ||
+          l.BANKDETAILS ||
+          {};
 
-  // 2. MAILINGDETAILS.LIST — this is where TallyPrime stores ledger mailing state
-  const mailing = l["MAILINGDETAILS.LIST"] || l.MAILINGDETAILS;
-  if (mailing) {
-    const arr = Array.isArray(mailing) ? mailing : [mailing];
-    for (const m of arr) {
-      if (!m || typeof m !== "object") continue;
-      // Try all known state field names TallyPrime uses
-      possible.push(
-        val(m.STATENAME),
-        val(m["MAILINGDETAILS.LIST.STATENAME"]),
-        val(m.STATE),
-        val(m.LEDSTATENAME)
-      );
-    }
-  }
+        return (
+          val(b.BANKNAME) ||
+          null
+        );
+      })(),
 
-  // 3. ADDRESS.LIST
-  const addrList = l["ADDRESS.LIST"];
-  if (addrList) {
-    const arr = Array.isArray(addrList) ? addrList : [addrList];
-    for (const a of arr) {
-      if (!a || typeof a !== "object") continue;
-      possible.push(val(a.STATENAME), val(a.STATE));
-    }
-  }
 
-  // 4. Filter and return first valid value
-  for (const s of possible) {
-    const clean = String(s || "")
-      .replace(/[♦◆\u0004\u2297\u2666\u25c6*]/g, "")
-      .trim();
-    if (clean && clean.toLowerCase() !== "not applicable" && clean.length > 1) {
-      return clean;
-    }
-  }
-  return null;
-})(),
-
-pincode: (() => {
-  // Try direct field first
-  const direct = val(l.PINCODE);
-  if (direct && direct.trim()) return direct.trim();
-  
-  // Then check MAILINGDETAILS.LIST
-  const mailing = l["MAILINGDETAILS.LIST"] || l.MAILINGDETAILS;
-  if (mailing) {
-    const arr = Array.isArray(mailing) ? mailing : [mailing];
-    for (const m of arr) {
-      if (!m) continue;
-      const v = val(m.PINCODE) || val(m["MAILINGDETAILS.LIST.PINCODE"]);
-      if (v && v.trim()) return v.trim();
-    }
-  }
-  return null;
-})(),
       bankAccount: val
-      (l.BANKDETAILS)       || null,   // Tally XML: BANKDETAILS (was BANKACCNO)
-      ifsc:        val(l.IFSCODE)           || null,   // Tally XML: IFSCODE ✓
-      swiftCode:   val(l.SWIFTCODE)         || null,   // Tally XML: SWIFTCODE ✓
-      bankName:    val(l.BANKINGCONFIGBANK) || null,   // Tally XML: BANKINGCONFIGBANK (was BANKNAME)
-      holderName:  val(l.BANKACCHOLDERNAME) || null,   // Tally XML: BANKACCHOLDERNAME (was ACHOLDERNAM)
-      bankBranch:  val(l.BRANCHNAME)        || null,   // Tally XML: BRANCHNAME (was BANKBRANCH)
-      bsrCode:     val(l.BANKBSRCODE)       || null,   // Tally XML: BANKBSRCODE (was BSRCODE)
+        (l.BANKDETAILS) || null,   // Tally XML: BANKDETAILS (was BANKACCNO)
+      ifsc: val(l.IFSCODE) || null,   // Tally XML: IFSCODE ✓
+      swiftCode: val(l.SWIFTCODE) || null,   // Tally XML: SWIFTCODE ✓
+      bankName: val(l.BANKINGCONFIGBANK) || null,   // Tally XML: BANKINGCONFIGBANK (was BANKNAME)
+      holderName: val(l.BANKACCHOLDERNAME) || null,   // Tally XML: BANKACCHOLDERNAME (was ACHOLDERNAM)
+      bankBranch: val(l.BRANCHNAME) || null,   // Tally XML: BRANCHNAME (was BANKBRANCH)
+      bsrCode: val(l.BANKBSRCODE) || null,   // Tally XML: BANKBSRCODE (was BSRCODE)
       msmeType: (() => {
-  const m = l["MSMEREGISTRATIONDETAILS.LIST"];
-  if (!m) return null;
-  const arr = Array.isArray(m) ? m : [m];
-  for (const item of arr) {
-    if (!item) continue;
-    const v = val(item.ENTERPRISETYPE);
-    if (v && v.trim().toLowerCase() !== "not applicable") return v.trim();
-  }
-  return null;
-})(),
-udyamNo: (() => {
-  const m = l["MSMEREGISTRATIONDETAILS.LIST"];
-  if (!m) return null;
-  const arr = Array.isArray(m) ? m : [m];
-  for (const item of arr) {
-    if (!item) continue;
-    const v = val(item.UDYAMREGNUMBER);
-    if (v && v.trim()) return v.trim();
-  }
-  return null;
-})(),
-msmeActivity: (() => {
-  const m = l["MSMEREGISTRATIONDETAILS.LIST"];
-  if (!m) return null;
-  const arr = Array.isArray(m) ? m : [m];
-  for (const item of arr) {
-    if (!item) continue;
-    const v = val(item.MSMEACTIVITYTYPE);
-    if (v && v.trim().toLowerCase() !== "not applicable") return v.trim();
-  }
-  return null;
-})(),
+        const m = l["MSMEREGISTRATIONDETAILS.LIST"];
+        if (!m) return null;
+        const arr = Array.isArray(m) ? m : [m];
+        for (const item of arr) {
+          if (!item) continue;
+          const v = val(item.ENTERPRISETYPE);
+          if (v && v.trim().toLowerCase() !== "not applicable") return v.trim();
+        }
+        return null;
+      })(),
+      udyamNo: (() => {
+        const m = l["MSMEREGISTRATIONDETAILS.LIST"];
+        if (!m) return null;
+        const arr = Array.isArray(m) ? m : [m];
+        for (const item of arr) {
+          if (!item) continue;
+          const v = val(item.UDYAMREGNUMBER);
+          if (v && v.trim()) return v.trim();
+        }
+        return null;
+      })(),
+      msmeActivity: (() => {
+        const m = l["MSMEREGISTRATIONDETAILS.LIST"];
+        if (!m) return null;
+        const arr = Array.isArray(m) ? m : [m];
+        for (const item of arr) {
+          if (!item) continue;
+          const v = val(item.MSMEACTIVITYTYPE);
+          if (v && v.trim().toLowerCase() !== "not applicable") return v.trim();
+        }
+        return null;
+      })(),
 
-creditLimit: parseTallyAmount(l.CREDITLIMIT?._ || l.CREDITLIMIT) || 0,
-creditDays:
-  val(l.DEFAULTCREDITPERIOD) ||
-  val(l.CREDITPERIOD) ||
-  val(l.CREDITDAYS) ||
-  "",
-isCreditCheck:
-  String(
-    val(l.CHECKFORCREDITDAYS) ||
-    val(l.ISCREDITCHECK) ||
-    "No"
-  ).trim(),
-isOverrideCreditLimit:
-  String(
-    val(l.OVERRIDECREDITLIMIT) ||
-    val(l.ISOVERRIDECREDITLIMIT) ||
-    "No"
-  ).trim(),
-      country: (() => {
-
-  const possible = [
-    l.COUNTRYNAME,
-    l.COUNTRY,
-    l.TERRITORYNAME,
-    l.TERRITORY
-  ];
-
-  for (let c of possible) {
-
-    if (typeof c === "object" && c._) {
-      c = c._;
-    }
-
-    c = String(c || "").trim();
-
-    if (
-      c &&
-      c.toLowerCase() !== "not applicable"
-    ) {
-      return c;
-    }
-  }
-
-  return null;
-
-})(),
+      creditLimit: parseTallyAmount(l.CREDITLIMIT?._ || l.CREDITLIMIT) || 0,
+      creditDays:
+        val(l.DEFAULTCREDITPERIOD) ||
+        val(l.CREDITPERIOD) ||
+        val(l.CREDITDAYS) ||
+        "",
+      isCreditCheck:
+        String(
+          val(l.CHECKFORCREDITDAYS) ||
+          val(l.ISCREDITCHECK) ||
+          "No"
+        ).trim(),
+      isOverrideCreditLimit:
+        String(
+          val(l.OVERRIDECREDITLIMIT) ||
+          val(l.ISOVERRIDECREDITLIMIT) ||
+          "No"
+        ).trim(),
 
 
-      address: (() => {
-  // Try MAILINGDETAILS.LIST first (multi-line address)
-  const md = l["MAILINGDETAILS.LIST"] || l.MAILINGDETAILS;
-  if (md) {
-    const arr = Array.isArray(md) ? md : [md];
-    const lines = arr.flatMap((m) => {
-      if (!m || typeof m !== "object") return [];
-      const list = m.LIST || m.ADDRESSLIST || m["MAILINGDETAILS.LIST"];
-      if (list) {
-        const la = Array.isArray(list) ? list : [list];
-        return la.map((x) => val(x.ADDRESS || x) || "").filter(Boolean);
-      }
-      return [val(m.ADDRESS || m.NAME) || ""].filter(Boolean);
-    });
-    if (lines.length > 0) return lines.join(", ");
-  }
 
-  // FIX: Try ADDRESS.LIST (Tally Prime structure)
-  // XML: <ADDRESS.LIST><ADDRESS TYPE="String">123 Test Street</ADDRESS></ADDRESS.LIST>
-  // xml2js parses this as: { "$": { TYPE: "String" }, ADDRESS: { "_": "123 Test Street", "$": {...} } }
-  const addrList = l["ADDRESS.LIST"];
-  if (addrList) {
-    const arr = Array.isArray(addrList) ? addrList : [addrList];
-    const lines = arr.flatMap((item) => {
-      if (!item || typeof item !== "object") return [];
-      // item.ADDRESS can be: string, { _: "value" }, or array of those
-      const addrField = item.ADDRESS;
-      if (!addrField) return [];
-      if (Array.isArray(addrField)) {
-        return addrField.map((a) => (typeof a === "object" ? a._ : a)).filter(Boolean);
-      }
-      if (typeof addrField === "object" && addrField._) return [addrField._];
-      if (typeof addrField === "string") return [addrField];
-      return [];
-    }).filter(Boolean);
-    if (lines.length > 0) return lines.join(", ");
-  }
+      hsnCode: (() => {
+        const gst = l["LEDGSTREGDETAILS.LIST"];
+        if (!gst) return null;
 
-  // Fallback: flat ADDRESS field
-  return extractAddress(l.ADDRESS) || null;
-})(),
+        const arr = Array.isArray(gst) ? gst : [gst];
 
-hsnCode: (() => {
-  const gst = l["LEDGSTREGDETAILS.LIST"];
-  if (!gst) return null;
+        for (const item of arr) {
+          if (!item) continue;
 
-  const arr = Array.isArray(gst) ? gst : [gst];
+          const code =
+            val(item.HSNCODE) ||
+            val(item.GSTHSNNAME) ||
+            val(item.SACCODE);
 
-  for (const item of arr) {
-    if (!item) continue;
+          if (code && code.trim()) {
+            return code.trim();
+          }
+        }
 
-    const code =
-      val(item.HSNCODE) ||
-      val(item.GSTHSNNAME) ||
-      val(item.SACCODE);
+        return null;
+      })(),
 
-    if (code && code.trim()) {
-      return code.trim();
-    }
-  }
+      gstRate: (() => {
+        const gst = l["LEDGSTREGDETAILS.LIST"];
+        if (!gst) return null;
 
-  return null;
-})(),
+        const arr = Array.isArray(gst) ? gst : [gst];
 
-gstRate: (() => {
-  const gst = l["LEDGSTREGDETAILS.LIST"];
-  if (!gst) return null;
+        for (const item of arr) {
+          if (!item) continue;
 
-  const arr = Array.isArray(gst) ? gst : [gst];
+          const rate =
+            val(item.GSTRATE) ||
+            val(item.GSTREGRATE);
 
-  for (const item of arr) {
-    if (!item) continue;
+          if (rate) {
+            const parsed = parseFloat(
+              String(rate).replace(/[^0-9.]/g, "")
+            );
 
-    const rate =
-      val(item.GSTRATE) ||
-      val(item.GSTREGRATE);
+            if (!isNaN(parsed)) {
+              return parsed;
+            }
+          }
+        }
 
-    if (rate) {
-      const parsed = parseFloat(
-        String(rate).replace(/[^0-9.]/g, "")
-      );
+        return null;
+      })(),
 
-      if (!isNaN(parsed)) {
-        return parsed;
-      }
-    }
-  }
+      taxability: (() => {
+        const gst = l["LEDGSTREGDETAILS.LIST"];
+        if (!gst) return null;
 
-  return null;
-})(),
+        const arr = Array.isArray(gst) ? gst : [gst];
 
-taxability: (() => {
-  const gst = l["LEDGSTREGDETAILS.LIST"];
-  if (!gst) return null;
+        for (const item of arr) {
+          if (!item) continue;
 
-  const arr = Array.isArray(gst) ? gst : [gst];
+          const tax =
+            val(item.TAXABILITY);
 
-  for (const item of arr) {
-    if (!item) continue;
+          if (tax && tax.trim()) {
+            return tax.trim();
+          }
+        }
 
-    const tax =
-      val(item.TAXABILITY);
+        return null;
+      })(),
+      ////////////////////
+      gstRegistrationType: (() => {
+        const gst = l["LEDGSTREGDETAILS.LIST"];
+        if (!gst) return null;
 
-    if (tax && tax.trim()) {
-      return tax.trim();
-    }
-  }
+        const arr = Array.isArray(gst)
+          ? gst
+          : [gst];
 
-  return null;
-})(),
-////////////////////
-gstRegistrationType: (() => {
-  const gst = l["LEDGSTREGDETAILS.LIST"];
-  if (!gst) return null;
+        for (const item of arr) {
+          if (!item) continue;
 
-  const arr = Array.isArray(gst)
-    ? gst
-    : [gst];
+          const reg =
+            val(item.GSTREGISTRATIONTYPE) ||
+            val(item.REGISTRATIONTYPE);
 
-  for (const item of arr) {
-    if (!item) continue;
+          if (reg && reg.trim()) {
+            return reg.trim();
+          }
+        }
 
-    const reg =
-      val(item.GSTREGISTRATIONTYPE) ||
-      val(item.REGISTRATIONTYPE);
+        return null;
+      })(),
+      /////////////
 
-    if (reg && reg.trim()) {
-      return reg.trim();
-    }
-  }
+      placeOfSupply: (() => {
+        const gst = l["LEDGSTREGDETAILS.LIST"];
+        if (!gst) return null;
 
-  return null;
-})(),
-/////////////
+        const arr = Array.isArray(gst)
+          ? gst
+          : [gst];
 
-placeOfSupply: (() => {
-  const gst = l["LEDGSTREGDETAILS.LIST"];
-  if (!gst) return null;
+        for (const item of arr) {
+          if (!item) continue;
 
-  const arr = Array.isArray(gst)
-    ? gst
-    : [gst];
+          const place =
+            val(item.PLACEOFSUPPLY) ||
+            val(item.PPLACEOFSUPPLY);
 
-  for (const item of arr) {
-    if (!item) continue;
+          if (place && place.trim()) {
+            return place.trim();
+          }
+        }
 
-    const place =
-      val(item.PLACEOFSUPPLY) ||
-      val(item.PPLACEOFSUPPLY);
+        return null;
+      })(),
+      ////////////
 
-    if (place && place.trim()) {
-      return place.trim();
-    }
-  }
+      typeOfSupply: (() => {
+        const gst = l["LEDGSTREGDETAILS.LIST"];
+        if (!gst) return null;
 
-  return null;
-})(),
-////////////
+        const arr = Array.isArray(gst) ? gst : [gst];
 
-typeOfSupply: (() => {
-  const gst = l["LEDGSTREGDETAILS.LIST"];
-  if (!gst) return null;
+        for (const item of arr) {
+          if (!item) continue;
 
-  const arr = Array.isArray(gst) ? gst : [gst];
+          const supply =
+            val(item.GSTTYPEOFSUPPLY) ||
+            val(item.TYPEOFSUPPLY);
 
-  for (const item of arr) {
-    if (!item) continue;
+          if (supply && supply.trim()) {
+            return supply.trim();
+          }
+        }
 
-    const supply =
-      val(item.GSTTYPEOFSUPPLY) ||
-      val(item.TYPEOFSUPPLY);
+        return null;
+      })(),
 
-    if (supply && supply.trim()) {
-      return supply.trim();
-    }
-  }
-
-  return null;
-})(),
-      
       alias: (() => {
-  const langList = l["LANGUAGENAME.LIST"];
-  if (!langList) return null;
-  const nameList = langList["NAME.LIST"];
-  if (!nameList) return null;
-  const nameField = nameList.NAME;
-  // NAME is an array when alias exists: ["TestCustomer4", "Project"]
-  if (Array.isArray(nameField) && nameField.length >= 2) {
-    const a = nameField[1];
-    if (a && String(a).trim()) return String(a).trim();
-  }
-  return null;
-})(),
+        const langList = l["LANGUAGENAME.LIST"];
+        if (!langList) return null;
+        const nameList = langList["NAME.LIST"];
+        if (!nameList) return null;
+        const nameField = nameList.NAME;
+        // NAME is an array when alias exists: ["TestCustomer4", "Project"]
+        if (Array.isArray(nameField) && nameField.length >= 2) {
+          const a = nameField[1];
+          if (a && String(a).trim()) return String(a).trim();
+        }
+        return null;
+      })(),
       customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
     });
   }
 
-   
+
 
 
   logger.success(`Fetched ${ledgers.length} ledgers`, { company: companyName });
@@ -979,7 +874,7 @@ export async function fetchTallyVoucherTypes(companyName) {
     companyName
   );
   const raw = await postXml(xml);
-  
+
   const parsed = await parseXml(raw, false);
   const rawVT =
     parsed?.ENVELOPE?.BODY?.DATA?.COLLECTION?.VOUCHERTYPE ||
@@ -993,8 +888,8 @@ export async function fetchTallyVoucherTypes(companyName) {
       return {
         guid: val(v.GUID),
         name,
-        parent:    val(v.PARENT),
-        baseType:  val(v.BASEVOUCHERTYPE) || val(v.PARENT) || name, // base standard type
+        parent: val(v.PARENT),
+        baseType: val(v.BASEVOUCHERTYPE) || val(v.PARENT) || name, // base standard type
         numberingMethod: val(v.NUMBERINGMETHOD),
         isOptional: val(v.ISOPTIONAL) === "Yes",
         isActive: val(v.ISACTIVE) !== "No",
@@ -1066,11 +961,11 @@ export async function fetchTallyCostCentres(companyName) {
       const name = c.$?.NAME || val(c.NAME) || null;
       if (!name) return null;
       return {
-        guid:     val(c.GUID),
+        guid: val(c.GUID),
         name,
-        parent:   (val(c.PARENT) || "Primary").trim(),
+        parent: (val(c.PARENT) || "Primary").trim(),
         category: val(c.CATEGORY) || null,
-        alterId:  val(c.ALTERID)  || null,
+        alterId: val(c.ALTERID) || null,
       };
     })
     .filter(Boolean);
@@ -1320,27 +1215,27 @@ export async function fetchTallyStockItems(companyName) {
       }
 
       return {
-        guid:            val(s.GUID),
+        guid: val(s.GUID),
         name,
-        alterId:         val(s.ALTERID) || null,
-        group:           val(s.PARENT) || "Primary",
-        category:        val(s.CATEGORY) || null,
-        baseUnit:        val(s.BASEUNITS),
+        alterId: val(s.ALTERID) || null,
+        group: val(s.PARENT) || "Primary",
+        category: val(s.CATEGORY) || null,
+        baseUnit: val(s.BASEUNITS),
         hsnCode,
         gstRate,         // numeric GST % from Tally (e.g. 18, 5, 28) — used for Item Tax Template
-        gstApplicable:   val(s.GSTAPPLICABLE),
+        gstApplicable: val(s.GSTAPPLICABLE),
         gstTypeOfSupply: val(s.GSTTYPEOFSUPPLY),
-        taxability:      val(s.TAXABILITY),       // "Taxable" / "Non-GST" / "Exempt" / "Nil-Rated"
-        openingQty:      parseTallyAmount(s.OPENINGBALANCE?._ || s.OPENINGBALANCE),
-        closingQty:      parseTallyAmount(s.CLOSINGBALANCE?._ || s.CLOSINGBALANCE),
-        openingValue:    parseTallyAmount(s.OPENINGVALUE?._ || s.OPENINGVALUE),
-        closingValue:    parseTallyAmount(s.CLOSINGVALUE?._ || s.CLOSINGVALUE),
-        customFields:    Object.keys(customFields).length > 0 ? customFields : undefined,
+        taxability: val(s.TAXABILITY),       // "Taxable" / "Non-GST" / "Exempt" / "Nil-Rated"
+        openingQty: parseTallyAmount(s.OPENINGBALANCE?._ || s.OPENINGBALANCE),
+        closingQty: parseTallyAmount(s.CLOSINGBALANCE?._ || s.CLOSINGBALANCE),
+        openingValue: parseTallyAmount(s.OPENINGVALUE?._ || s.OPENINGVALUE),
+        closingValue: parseTallyAmount(s.CLOSINGVALUE?._ || s.CLOSINGVALUE),
+        customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
       };
     })
     .filter(Boolean);
 
-  const withHsn     = items.filter((i) => i.hsnCode).length;
+  const withHsn = items.filter((i) => i.hsnCode).length;
   const withGstRate = items.filter((i) => i.gstRate !== null && i.gstRate !== undefined).length;
   logger.success(`Fetched ${items.length} stock items (${withHsn} with HSN/SAC, ${withGstRate} with GST rate)`, { company: companyName });
   return items;
@@ -1438,13 +1333,13 @@ export async function fetchTallyGodowns(companyName) {
       const name = g.$?.NAME || val(g.NAME) || null;
       if (!name) return null;
       return {
-        guid:       val(g.GUID),
+        guid: val(g.GUID),
         name,
-        parent:     val(g.PARENT) || "Primary",
-        address:    extractAddress(g.ADDRESS) || null,
-        hasSpace:   val(g.HASSPACE) === "Yes",
+        parent: val(g.PARENT) || "Primary",
+        address: extractAddress(g.ADDRESS) || null,
+        hasSpace: val(g.HASSPACE) === "Yes",
         isInternal: val(g.ISINTERNAL) !== "No",
-        alterId:    val(g.ALTERID)   || null,
+        alterId: val(g.ALTERID) || null,
       };
     })
     .filter(Boolean);
@@ -1513,7 +1408,7 @@ async function fetchTallyVouchersChunk(companyName, fromDate, toDate) {
   const tallyFrom = fromDate
     ? String(fromDate).replace(/-/g, "")
     : new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  const tallyTo   = toDate   ? String(toDate).replace(/-/g, "")   : new Date().toISOString().slice(0,10).replace(/-/g,"");
+  const tallyTo = toDate ? String(toDate).replace(/-/g, "") : new Date().toISOString().slice(0, 10).replace(/-/g, "");
 
   const xml = `
 <ENVELOPE>
@@ -1556,10 +1451,10 @@ async function fetchTallyVouchersChunk(companyName, fromDate, toDate) {
   // Response path for inline TDL Collection: ENVELOPE > BODY > DATA > COLLECTION > VOUCHER
   const body = parsed?.ENVELOPE?.BODY;
   const rawVouchers =
-    body?.DATA?.COLLECTION?.VOUCHER   ||
+    body?.DATA?.COLLECTION?.VOUCHER ||
     body?.DATA?.TALLYMESSAGE?.VOUCHER ||
-    body?.DATA?.VOUCHER               ||
-    body?.TALLYMESSAGE?.VOUCHER       ||
+    body?.DATA?.VOUCHER ||
+    body?.TALLYMESSAGE?.VOUCHER ||
     [];
 
   const vArr = Array.isArray(rawVouchers) ? rawVouchers : (rawVouchers ? [rawVouchers] : []);
@@ -1573,27 +1468,27 @@ async function fetchTallyVouchersChunk(companyName, fromDate, toDate) {
       `${val(v.DATE)}-${val(v.VOUCHERNUMBER)}-${val(v.VOUCHERTYPENAME)}`;
 
     const allEntries = v["ALLLEDGERENTRIES.LIST"] || v["LEDGERENTRIES.LIST"] || [];
-    const entryArr   = Array.isArray(allEntries) ? allEntries : [allEntries];
-    let netAmount    = 0;
-    const entries    = [];
+    const entryArr = Array.isArray(allEntries) ? allEntries : [allEntries];
+    let netAmount = 0;
+    const entries = [];
 
     for (const e of entryArr) {
       if (!e || typeof e !== "object") continue;
-      const ledgerName       = val(e.LEDGERNAME);
+      const ledgerName = val(e.LEDGERNAME);
       const isDeemedPositive = val(e.ISDEEMEDPOSITIVE) === "Yes";
-      const amount           = parseTallyAmount(val(e.AMOUNT));
+      const amount = parseTallyAmount(val(e.AMOUNT));
       if (isDeemedPositive) netAmount += amount;
 
       // Cost centre: Tally stores it in COSTCENTREDETAILS.LIST on the ledger entry.
       // Take the first cost centre name if present (most vouchers have only one).
-      const ccDetails  = e["COSTCENTREDETAILS.LIST"] || e["COSTCENTREDETAILS"] || [];
-      const ccArr      = Array.isArray(ccDetails) ? ccDetails : (ccDetails ? [ccDetails] : []);
+      const ccDetails = e["COSTCENTREDETAILS.LIST"] || e["COSTCENTREDETAILS"] || [];
+      const ccArr = Array.isArray(ccDetails) ? ccDetails : (ccDetails ? [ccDetails] : []);
       const costCentre = val(ccArr[0]?.COSTCENTRENAME) || null;
 
       if (ledgerName) entries.push({
-        ledger:      ledgerName,
+        ledger: ledgerName,
         amount,
-        isDebit:     isDeemedPositive,
+        isDebit: isDeemedPositive,
         costCentre,                        // ← Tally cost centre name (null if not set)
         isDeemedPositive,                  // ← raw flag kept for downstream logic
       });
@@ -1613,10 +1508,10 @@ async function fetchTallyVouchersChunk(companyName, fromDate, toDate) {
     //   AMOUNT        → plain number string       e.g. "-79.00"
     //
     // Merge both inventory entry lists — order: ALLINVENTORYENTRIES first
-    const rawInvAll  = v["ALLINVENTORYENTRIES.LIST"] || [];
-    const rawInvSimp = v["INVENTORYENTRIES.LIST"]    || [];
+    const rawInvAll = v["ALLINVENTORYENTRIES.LIST"] || [];
+    const rawInvSimp = v["INVENTORYENTRIES.LIST"] || [];
     const rawInvEntries = [
-      ...(Array.isArray(rawInvAll)  ? rawInvAll  : (rawInvAll  ? [rawInvAll]  : [])),
+      ...(Array.isArray(rawInvAll) ? rawInvAll : (rawInvAll ? [rawInvAll] : [])),
       ...(Array.isArray(rawInvSimp) ? rawInvSimp : (rawInvSimp ? [rawInvSimp] : [])),
     ];
 
@@ -1629,25 +1524,25 @@ async function fetchTallyVouchersChunk(companyName, fromDate, toDate) {
       if (!itemName) continue;
 
       // Qty: prefer BILLEDQTY over ACTUALQTY (matches what appears on the invoice)
-      const qty    = parseTallyQty(val(ie.BILLEDQTY) || val(ie.ACTUALQTY));
-      const rate   = parseTallyRate(val(ie.RATE));
+      const qty = parseTallyQty(val(ie.BILLEDQTY) || val(ie.ACTUALQTY));
+      const rate = parseTallyRate(val(ie.RATE));
       const amount = parseTallyAmount(val(ie.AMOUNT));
 
       // Derive missing rate/amount from the other field
-      const finalRate   = rate   || (qty ? amount / qty : 0);
+      const finalRate = rate || (qty ? amount / qty : 0);
       const finalAmount = amount || (rate * qty);
 
       // Godown (warehouse) and batch from the first BATCHALLOCATIONS sub-entry
-      const batchAllocs  = ie["BATCHALLOCATIONS.LIST"] || ie["BATCHALLOCATIONS"] || [];
-      const batchArr     = Array.isArray(batchAllocs) ? batchAllocs : (batchAllocs ? [batchAllocs] : []);
-      const godownName   = val(batchArr[0]?.GODOWNNAME)  || val(ie.GODOWNNAME)  || null;
-      const batchName    = val(batchArr[0]?.BATCHNAME)   || val(ie.BATCHNAME)   || null;
+      const batchAllocs = ie["BATCHALLOCATIONS.LIST"] || ie["BATCHALLOCATIONS"] || [];
+      const batchArr = Array.isArray(batchAllocs) ? batchAllocs : (batchAllocs ? [batchAllocs] : []);
+      const godownName = val(batchArr[0]?.GODOWNNAME) || val(ie.GODOWNNAME) || null;
+      const batchName = val(batchArr[0]?.BATCHNAME) || val(ie.BATCHNAME) || null;
 
       inventoryItems.push({
         itemName,
-        qty:        qty,
-        rate:       Math.abs(finalRate),
-        amount:     Math.abs(finalAmount),
+        qty: qty,
+        rate: Math.abs(finalRate),
+        amount: Math.abs(finalAmount),
         godownName,   // ← Tally godown / warehouse name
         batchName,    // ← Tally batch / lot name
       });
@@ -1655,9 +1550,9 @@ async function fetchTallyVouchersChunk(companyName, fromDate, toDate) {
 
     // Extract due date from Tally bill allocations (set by credit terms on the voucher)
     const billAllocs = v["BILLALLOCATIONS.LIST"] || [];
-    const billArr    = Array.isArray(billAllocs) ? billAllocs : (billAllocs ? [billAllocs] : []);
-    const firstBill  = billArr.find((b) => b && val(b.BILLDATE));
-    const dueDate    = firstBill ? tallyDateToISO(val(firstBill.BILLDATE)) : null;
+    const billArr = Array.isArray(billAllocs) ? billAllocs : (billAllocs ? [billAllocs] : []);
+    const firstBill = billArr.find((b) => b && val(b.BILLDATE));
+    const dueDate = firstBill ? tallyDateToISO(val(firstBill.BILLDATE)) : null;
     // Bill reference name (used as supplier invoice number for Purchase vouchers)
     const billRefName = firstBill ? (val(firstBill.NAME) || val(firstBill.BILLNAME)) : null;
 
@@ -1668,19 +1563,19 @@ async function fetchTallyVouchersChunk(companyName, fromDate, toDate) {
     const salesLedgerEntry = entries.find(
       (e) => e.ledger && e.ledger !== partyLedgerName
     );
-    const salesLedgerName   = salesLedgerEntry?.ledger   || null;
-    const salesCostCentre   = salesLedgerEntry?.costCentre || null;
+    const salesLedgerName = salesLedgerEntry?.ledger || null;
+    const salesCostCentre = salesLedgerEntry?.costCentre || null;
     // First cost centre across all entries (fallback if salesLedgerEntry has none)
-    const firstCostCentre   = entries.find((e) => e.costCentre)?.costCentre || null;
+    const firstCostCentre = entries.find((e) => e.costCentre)?.costCentre || null;
 
     vouchers.push({
       guid: guid || `voucher-${vouchers.length}`,
-      voucherDate:    tallyDateToISO(val(v.DATE)),
-      voucherType:    val(v.VOUCHERTYPENAME) || val(v.VOUCHERTYPE),
-      voucherNumber:  val(v.VOUCHERNUMBER),
-      referenceNo:    val(v.REFERENCE) || billRefName,  // bill ref name as fallback
-      partyName:      val(v.PARTYLEDGERNAME),
-      narration:      val(v.NARRATION),
+      voucherDate: tallyDateToISO(val(v.DATE)),
+      voucherType: val(v.VOUCHERTYPENAME) || val(v.VOUCHERTYPE),
+      voucherNumber: val(v.VOUCHERNUMBER),
+      referenceNo: val(v.REFERENCE) || billRefName,  // bill ref name as fallback
+      partyName: val(v.PARTYLEDGERNAME),
+      narration: val(v.NARRATION),
       dueDate,        // ← bill due date from Tally credit terms (null if not set)
       netAmount,
       entries,
@@ -1688,10 +1583,10 @@ async function fetchTallyVouchersChunk(companyName, fromDate, toDate) {
       salesLedgerName,                         // ← Tally sales/purchase ledger name
       salesCostCentre,                         // ← cost centre on the sales ledger entry
       firstCostCentre,                         // ← first cost centre found on any entry
-      lineItemCount:  entries.length,
-      isInvoice:    val(v.ISINVOICE)   === "Yes",
-      isOptional:   val(v.ISOPTIONAL)  === "Yes",
-      isPostDated:  val(v.ISPOSTDATED) === "Yes",
+      lineItemCount: entries.length,
+      isInvoice: val(v.ISINVOICE) === "Yes",
+      isOptional: val(v.ISOPTIONAL) === "Yes",
+      isPostDated: val(v.ISPOSTDATED) === "Yes",
     });
   }
 
@@ -1720,7 +1615,7 @@ export async function fetchTallyVouchers(companyName, fromDate = null, toDate = 
       if (!v.voucherDate) return true;
       const d = v.voucherDate.slice(0, 10); // normalise to YYYY-MM-DD for safe string compare
       if (fromDate && d < fromDate) return false;
-      if (toDate   && d > toDate)   return false;
+      if (toDate && d > toDate) return false;
       return true;
     });
     logger.success(`Fetched ${filtered.length} vouchers (filtered: ${fromDate} → ${toDate}) from ${unique.length} total`, { company: companyName });
@@ -1729,7 +1624,7 @@ export async function fetchTallyVouchers(companyName, fromDate = null, toDate = 
     if (filtered.length === 0 && unique.length > 0) {
       const dates = unique.map((v) => v.voucherDate).filter(Boolean).sort();
       const earliest = dates[0] || "unknown";
-      const latest   = dates[dates.length - 1] || "unknown";
+      const latest = dates[dates.length - 1] || "unknown";
       logger.warn(
         `All ${unique.length} Tally vouchers are outside the requested window (${fromDate} → ${toDate}). ` +
         `Actual voucher dates in Tally: ${earliest} → ${latest}. ` +
@@ -1963,16 +1858,16 @@ export async function runMiddlewareCheck(companyName, options = {}) {
   // ── 15. Vouchers (transactions) ───────────────────────────────────────────
   // Fetch ALL vouchers — no date filter at all.
   // ── 15. Vouchers (transactions) ───────────────────────────────────────────
-try {
-  const today   = new Date().toISOString().slice(0, 10);
-  const from365 = new Date(Date.now() - 365 * 864e5).toISOString().slice(0, 10);
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const from365 = new Date(Date.now() - 365 * 864e5).toISOString().slice(0, 10);
 
-  // Use user-supplied dates from the Data Check form if provided; fall back to last 365 days
-  const voucherFrom = options.fromDate || from365;
-  const voucherTo   = options.toDate   || today;
+    // Use user-supplied dates from the Data Check form if provided; fall back to last 365 days
+    const voucherFrom = options.fromDate || from365;
+    const voucherTo = options.toDate || today;
 
-  logger.info(`Voucher check: fetching vouchers from ${voucherFrom} to ${voucherTo}`, { company: companyName });
-  const vouchers = await fetchTallyVouchers(companyName, voucherFrom, voucherTo);
+    logger.info(`Voucher check: fetching vouchers from ${voucherFrom} to ${voucherTo}`, { company: companyName });
+    const vouchers = await fetchTallyVouchers(companyName, voucherFrom, voucherTo);
     const byType = {};
 
     vouchers.forEach((v) => {
@@ -2046,21 +1941,21 @@ import {
  * Returns array of { id: "2016-04", from: "2016-04-01", to: "2016-04-30" }
  */
 function generateMonthlyChunks(fromDate, toDate) {
-  const chunks  = [];
-  let   current = new Date(fromDate + "T00:00:00Z");
-  const end     = new Date(toDate   + "T00:00:00Z");
+  const chunks = [];
+  let current = new Date(fromDate + "T00:00:00Z");
+  const end = new Date(toDate + "T00:00:00Z");
 
   while (current <= end) {
-    const year  = current.getUTCFullYear();
+    const year = current.getUTCFullYear();
     const month = current.getUTCMonth(); // 0-indexed
 
     // Last day of this month
-    const lastDay  = new Date(Date.UTC(year, month + 1, 0));
+    const lastDay = new Date(Date.UTC(year, month + 1, 0));
     const chunkEnd = lastDay > end ? end : lastDay;
 
     const fromStr = current.toISOString().slice(0, 10);
-    const toStr   = chunkEnd.toISOString().slice(0, 10);
-    const id      = `${year}-${String(month + 1).padStart(2, "0")}`;
+    const toStr = chunkEnd.toISOString().slice(0, 10);
+    const id = `${year}-${String(month + 1).padStart(2, "0")}`;
 
     chunks.push({ id, from: fromStr, to: toStr });
 
@@ -2087,8 +1982,8 @@ export async function fetchTallyVouchersChunked(
   companyName,
   fromDate,
   toDate,
-  erpnextUrl  = "default",
-  onProgress  = null
+  erpnextUrl = "default",
+  onProgress = null
 ) {
   if (!fromDate) {
     throw new Error(
@@ -2098,7 +1993,7 @@ export async function fetchTallyVouchersChunked(
   }
 
   const chunks = generateMonthlyChunks(fromDate, toDate);
-  const total  = chunks.length;
+  const total = chunks.length;
 
   logger.info(
     `Voucher chunked fetch: ${total} monthly chunks — ${fromDate} → ${toDate}`,
@@ -2106,7 +2001,7 @@ export async function fetchTallyVouchersChunked(
   );
 
   const allVouchers = [];
-  const seen        = new Set();
+  const seen = new Set();
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
@@ -2140,8 +2035,8 @@ export async function fetchTallyVouchersChunked(
 
       // ── Save chunk progress immediately after successful fetch ────────────
       markChunkDone(companyName, erpnextUrl, "vouchers", chunk.id, {
-        from:  chunk.from,
-        to:    chunk.to,
+        from: chunk.from,
+        to: chunk.to,
         count: unique.length,
       });
 
@@ -2182,9 +2077,9 @@ export async function fetchTallyVouchersChunked(
  */
 export async function fetchTallyLedgersChunked(
   companyName,
-  erpnextUrl  = "default",
-  batchSize   = parseInt(process.env.SYNC_LEDGER_BATCH_SIZE, 10) || 500,
-  onProgress  = null
+  erpnextUrl = "default",
+  batchSize = parseInt(process.env.SYNC_LEDGER_BATCH_SIZE, 10) || 500,
+  onProgress = null
 ) {
   logger.info(
     `Ledger chunked fetch: fetching all ledgers then batching by ${batchSize}`,
@@ -2193,15 +2088,15 @@ export async function fetchTallyLedgersChunked(
 
   // Fetch all at once from Tally (Tally doesn't support offset/pagination)
   const allLedgers = await fetchTallyLedgers(companyName);
-  const total      = allLedgers.length;
-  const batches    = [];
+  const total = allLedgers.length;
+  const batches = [];
 
   // Split into batches
   for (let i = 0; i < total; i += batchSize) {
     batches.push({
-      id:      `batch-${Math.floor(i / batchSize)}`,
-      from:    i,
-      to:      Math.min(i + batchSize, total),
+      id: `batch-${Math.floor(i / batchSize)}`,
+      from: i,
+      to: Math.min(i + batchSize, total),
       ledgers: allLedgers.slice(i, i + batchSize),
     });
   }
@@ -2232,3 +2127,7 @@ export async function fetchTallyLedgersChunked(
 
   return { batches: pendingBatches, total, batchCount: batches.length, allLedgers };
 }
+export async function createSalesVoucher() { return false; }
+export async function createPurchaseVoucher() { return false; }
+export async function createPaymentVoucher() { return false; }
+export async function createJournalVoucher() { return false; }

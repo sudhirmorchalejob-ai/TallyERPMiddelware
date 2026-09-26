@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { SyncToErpNext } from "./SyncToErpNext";
 
-const BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:4000/api";
+const BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
 
 const C = {
   card:"#ffffff", surface:"#f8f9fc", bg:"#eef0f6", border:"#e4e7ef", borderH:"#c8cedd",

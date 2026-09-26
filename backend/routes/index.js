@@ -439,7 +439,8 @@ router.post("/sync/ledgers", async (req, res) => {
     try {
       const state      = getCompanyState(company, erpnextUrl);
       const allLedgers = await fetchTallyLedgers(company);
-      const { toSync, unchanged } = filterChangedMasters(allLedgers, state.ledgerAlterIds);
+      const { toSync: changedLedgers, unchanged } = filterChangedMasters(allLedgers, state.ledgerAlterIds);
+      const toSync = (req.body.force || req.body.forceAll || !state.ledgerAlterIds) ? allLedgers : changedLedgers;
       logger.info(`Ledgers: ${toSync.length} to sync, ${unchanged} unchanged (skipped)`);
       if (toSync.length === 0) {
         logger.info(`Ledger sync job ${jobId}: already up to date`);

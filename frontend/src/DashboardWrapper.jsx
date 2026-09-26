@@ -23,9 +23,8 @@ const PAGE_META = {
   settings: { title: "Settings",        sub: "ERPNext credentials & license"        },
 };
 
-export default function DashboardWrapper({ companies, onRefresh, erpCompany }) {
+export default function DashboardWrapper({ companies, onRefresh, selectedCompany, onCompanyChange }) {
   const [activeTab, setActiveTab] = useState("settings");
-  const [currentCompany, setCurrentCompany] = useState(null);
 
   const meta = PAGE_META[activeTab] || PAGE_META["check"];
 
@@ -266,13 +265,13 @@ export default function DashboardWrapper({ companies, onRefresh, erpCompany }) {
         {/* Content */}
         <main style={{ flex: 1, overflowY: "auto", padding: "28px 32px" }}>
           <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-            {activeTab === "dashboard" && <DashboardPage currentCompany={currentCompany} />}
+            {activeTab === "dashboard" && <DashboardPage currentCompany={selectedCompany} />}
             {activeTab === "check" && <MiddlewareCheck companies={companies} />}
 <div style={{display:activeTab==="sync"?"block":"none"}}>
-  <SyncToErpNext companies={companies} onCompanyChange={setCurrentCompany} />
+  <SyncToErpNext companies={companies} onCompanyChange={onCompanyChange} />
 </div>
-{activeTab === "logs" && <LiveLogs currentCompany={erpCompany || currentCompany} />}
-{activeTab === "settings" && <SettingsPage companies={companies} selectedCompany={currentCompany} />}
+{activeTab === "logs" && <LiveLogs currentCompany={selectedCompany} />}
+{activeTab === "settings" && <SettingsPage companies={companies} selectedCompany={selectedCompany} />}
           </div>
         </main>
       </div>

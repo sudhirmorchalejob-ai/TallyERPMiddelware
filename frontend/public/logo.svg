@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1E293B" />
+      <stop offset="50%" stop-color="#0F172A" />
+      <stop offset="100%" stop-color="#0284C7" />
+    </linearGradient>
+    <linearGradient id="tallyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#0284C7" />
+    </linearGradient>
+    <linearGradient id="erpGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34D399" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="2" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Background Rounded Base -->
+  <rect width="64" height="64" rx="14" fill="url(#bg)" />
+  <rect x="1" y="1" width="62" height="62" rx="13" stroke="#38BDF8" stroke-width="1.5" stroke-opacity="0.3" fill="none" />
+
+  <!-- Sync Flow / Bridge Design -->
+  <!-- Left node (Tally - Blue) -->
+  <circle cx="20" cy="24" r="7" fill="url(#tallyGrad)" filter="url(#glow)" />
+  <text x="20" y="27.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="9" font-weight="900" fill="#FFFFFF" text-anchor="middle">T</text>
+
+  <!-- Right node (ERPNext - Emerald) -->
+  <circle cx="44" cy="40" r="7" fill="url(#erpGrad)" filter="url(#glow)" />
+  <text x="44" y="43.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="9" font-weight="900" fill="#FFFFFF" text-anchor="middle">E</text>
+
+  <!-- Forward Sync Arrow (Top curve: T -> E) -->
+  <path d="M26 21 C 36 15, 42 22, 42 30" stroke="#38BDF8" stroke-width="2.5" stroke-linecap="round" fill="none" />
+  <polygon points="42,33 38.5,27.5 45,28.5" fill="#38BDF8" />
+
+  <!-- Return Sync Arrow (Bottom curve: E -> T) -->
+  <path d="M38 43 C 28 49, 22 42, 22 34" stroke="#34D399" stroke-width="2.5" stroke-linecap="round" fill="none" />
+  <polygon points="22,31 25.5,36.5 19,35.5" fill="#34D399" />
+</svg>

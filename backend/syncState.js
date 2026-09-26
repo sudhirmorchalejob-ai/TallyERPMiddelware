@@ -182,6 +182,15 @@ export function filterChangedMasters(items, storedAlterIds, keyField = "name") {
     if (!(key in storedAlterIds)) { toSync.push(item); continue; }
     if (storedAlterIds[key] !== alterId) { toSync.push(item); continue; }
 
+    if (key === "Customer6") {
+  console.log("ALTERID CHECK", {
+    key,
+    currentAlterId: alterId,
+    storedAlterId: storedAlterIds[key],
+    same: storedAlterIds[key] === alterId,
+  });
+}
+
     unchanged++;
   }
 

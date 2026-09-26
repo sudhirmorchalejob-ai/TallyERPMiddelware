@@ -1,7 +1,7 @@
 // src/pages/SettingsPage.jsx
 import { useState, useEffect } from "react";
 
-const BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:4000/api";
+const BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
 
 const C = {
   card:"#ffffff", surface:"#f0f3fa", bg:"#e8edf6", border:"#d8dff0",
@@ -512,7 +512,7 @@ function LicenseSection() {
           </div>
           <div style={{ textAlign: "right" }}>
             <p style={{ fontFamily: C.title, fontSize: 26, fontWeight: 800, color: "#fff", margin: 0, letterSpacing: "-1px" }}>
-              ₹15,000
+             
             </p>
             {activated && (
               <span style={{
