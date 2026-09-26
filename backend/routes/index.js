@@ -1046,23 +1046,10 @@ router.get("/sync/tenants", (_req, res) => {
 
 
 // ── POST /license/verify-email ────────────────────────────────────────────────
-router.post("/license/verify-email", async (req, res) => {
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ valid: false, reason: "Email required" });
-
-  try {
-    const { validateLicense } = await import("../services/lmsService.js");
-    const result = await validateLicense(email.trim().toLowerCase());
-    res.json({
-      valid:         result.valid,
-      plan:          result.plan,
-      endDate:       result.endDate,
-      customerEmail: result.customerEmail,
-      reason:        result.reason || null,
-    });
-  } catch (e) {
-    res.status(500).json({ valid: false, reason: e.message });
-  }
-});
+// /license/verify-email and /license/status live in ./licenseRoute.js.
+// They used to be duplicated here, but this router is mounted first in
+// server.js, so this copy was the one actually serving requests -- and it had
+// drifted: it omitted `features` and `productId`, so the UI never received the
+// plan's feature flags. licenseRoute.js is now the single source of truth.
 
 export default router;

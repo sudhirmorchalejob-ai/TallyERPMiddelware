@@ -391,6 +391,9 @@ function LicenseSection() {
   );
   const [verifying, setVerifying] = useState(false);
   const [emailError, setEmailError] = useState("");
+  // "available" | "none" | "error" | null — drives the explicit
+  // "License Available" / "No License" result panel.
+  const [emailResult, setEmailResult] = useState(null);
   const [licenseKey, setLicenseKey] = useState(
     () => localStorage.getItem("license_key") || ""
   );
@@ -403,31 +406,54 @@ function LicenseSection() {
   const [activateMsg, setActivateMsg] = useState("");
   const savedEmail = localStorage.getItem("license_email") || "";
 
+  // Mirrors the backend check so the user gets an instant answer instead of a
+  // round trip. The backend stays the authority — this is only a pre-filter.
+  const EMAIL_RE = /^[^\s@,;:<>()[\]\\"]+@[^\s@,;:<>()[\]\\".]+(\.[^\s@,;:<>()[\]\\".]+)+$/;
+
   async function handleVerifyEmail() {
-    if (!email.trim() || !email.includes("@")) {
+    const normalized = email.trim().toLowerCase();
+    if (!normalized || normalized.length > 254 || !EMAIL_RE.test(normalized)) {
+      setEmailResult({ state: "none", detail: "That does not look like a valid email address." });
       setEmailError("Please enter a valid email address.");
       return;
     }
     setVerifying(true);
     setEmailError("");
+    setEmailResult(null);
     try {
       const res  = await fetch(`${BASE_URL}/license/verify-email`, {
         method : "POST",
         headers: { "Content-Type": "application/json" },
-        body   : JSON.stringify({ email: email.trim().toLowerCase() }),
+        body   : JSON.stringify({ email: normalized }),
       });
       const data = await res.json();
-      if (data.valid) {
-        localStorage.setItem("license_email",  email.trim().toLowerCase());
-        localStorage.setItem("license_plan",   data.plan   || "Pro");
-        localStorage.setItem("license_end",    data.endDate|| "");
+
+      // Only an explicit valid:true unlocks. HTTP 200 alone is never a pass —
+      // the backend has already checked licence, product, status and expiry.
+      if (data.valid === true) {
+        localStorage.setItem("license_email",  normalized);
+        localStorage.setItem("license_plan",   data.plan    || "Pro");
+        localStorage.setItem("license_end",    data.endDate || "");
         localStorage.setItem("license_status", "active");
+        setEmailResult({
+          state:  "available",
+          detail: `${data.plan || "Licensed"}${data.productName ? ` · ${data.productName}` : ""}`,
+        });
         setEmailSubmitted(true);
         setActivated(true);
+      } else if (data.verificationFailed) {
+        // Could not check — this is NOT the same as "no licence".
+        setEmailResult({
+          state:  "error",
+          detail: data.reason || "Could not reach the license service.",
+        });
+        setEmailError(data.reason || "Could not verify right now. Please try again.");
       } else {
-        setEmailError(data.reason || "No active license found for this email. Please purchase at our website.");
+        setEmailResult({ state: "none", detail: data.reason || "" });
+        setEmailError(data.reason || "No active license found for this email.");
       }
-    } catch (e) {
+    } catch {
+      setEmailResult({ state: "error", detail: "Could not reach the license service." });
       setEmailError("Could not reach license server. Please check your internet connection.");
     } finally {
       setVerifying(false);
@@ -571,11 +597,46 @@ function LicenseSection() {
                 cursor: !email.trim() ? "not-allowed" : "pointer",
                 flexShrink: 0, transition: "all .15s",
               }}>
-              {verifying ? <><Spinner size={11} color="#fff" /> Verifying…</> : "Verify →"}
+              {verifying ? <><Spinner size={11} color="#fff" /> Checking Licentic…</> : "Check License →"}
             </button>
           </div>
-          {emailError && (
-            <p style={{ fontFamily: C.mono, fontSize: 10, color: C.red, margin: 0 }}>{emailError}</p>
+
+          {/* ── Explicit result: License Available / No License ── */}
+          {emailResult && !emailSubmitted && (
+            <div style={{
+              display: "flex", alignItems: "flex-start", gap: 10,
+              padding: "11px 13px", borderRadius: 9,
+              background: emailResult.state === "available" ? C.greenL
+                         : emailResult.state === "error"   ? C.amberL : C.redL,
+              border: `1px solid ${emailResult.state === "available" ? C.greenB
+                                 : emailResult.state === "error"   ? C.amberB : "#fecaca"}`,
+            }}>
+              <span style={{ fontSize: 15, lineHeight: 1.2 }}>
+                {emailResult.state === "available" ? "✅" : emailResult.state === "error" ? "⚠️" : "❌"}
+              </span>
+              <div style={{ minWidth: 0 }}>
+                <p style={{
+                  fontFamily: C.title, fontSize: 12, fontWeight: 800, margin: 0,
+                  color: emailResult.state === "available" ? C.green
+                       : emailResult.state === "error"   ? C.amber : C.red,
+                }}>
+                  {emailResult.state === "available" ? "License Available"
+                   : emailResult.state === "error"   ? "Could Not Verify"
+                   : "No License"}
+                </p>
+                <p style={{ fontFamily: C.mono, fontSize: 10, color: C.muted, margin: "3px 0 0", lineHeight: 1.6 }}>
+                  {emailResult.state === "available"
+                    ? `An active license for ${email.trim().toLowerCase()} was confirmed in Licentic.${emailResult.detail ? ` (${emailResult.detail})` : ""}`
+                    : emailResult.state === "error"
+                      ? `${emailResult.detail} This is a connection problem, not a missing license.`
+                      : `${email.trim().toLowerCase()} has no active license for Tally ERP Middleware in Licentic.${emailResult.detail ? ` (${emailResult.detail})` : ""}`}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {emailError && emailResult?.state === "error" && (
+            <p style={{ fontFamily: C.mono, fontSize: 10, color: C.amber, margin: 0 }}>{emailError}</p>
           )}
         </div>
       )}

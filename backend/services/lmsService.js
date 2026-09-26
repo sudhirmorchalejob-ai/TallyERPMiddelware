@@ -1,12 +1,15 @@
-
 /**
  * LMS Integration Service
- * Calls the License Management System to validate license by customer email.
+ * Validates a customer email against Licentic and approves it ONLY when
+ * Licentic returns an active, unexpired licence for the configured product.
  *
- * LMS Base URL : https://dashboard.licentic.org
- * Public route : GET /api/public-license/active-license/:email  (no auth needed)
- * Heartbeat    : POST /api/heartbeat/:licenseId
- * External key : x-api-key: my-secret-key-123  (for customer-sync routes only)
+ * Config (all from environment, nothing hardcoded):
+ *   LMS_BASE_URL              e.g. https://dashboard.licentic.org
+ *   LMS_API_KEY               sent as the x-api-key header
+ *   LMS_PRODUCT_ID            required product, e.g. 6a23c644247319b4b7bf7006
+ *   LMS_ACTIVE_LICENSE_PATH   route override (see ACTIVE_LICENSE_PATH_CANDIDATES)
+ *
+ * Fail closed: no licence, bad key, outage or unexpected shape all reject.
  */
 
 import https from 'https';
@@ -15,9 +18,36 @@ import fs from 'fs';
 import path from 'path';
 import { logger } from '../logs/logger.js';
 
-const LMS_BASE_URL = process.env.LMS_BASE_URL || 'https://dashboard.licentic.org';
-const LMS_API_KEY = process.env.LMS_API_KEY || 'my-secret-key-123';
-const PRODUCT_ID = '6a23c644247319b4b7bf7006';
+const LMS_BASE_URL = (process.env.LMS_BASE_URL || 'https://dashboard.licentic.org').replace(/\/+$/, '');
+const LMS_API_KEY = String(process.env.LMS_API_KEY || '').trim();
+// "Tally ERP Middleware". Env wins; the literal is only a last-resort default
+// so a misconfigured .env still verifies against the right product.
+const PRODUCT_ID = String(process.env.LMS_PRODUCT_ID || '').trim() || '6a23c644247319b4b7bf7006';
+
+// Route that Licentic serves for "give me this email's active licence".
+//
+// IMPORTANT --- the deployed Licentic answers on `/actve-license` (no "i").
+// `/active-license` is NOT registered and returns the catch-all 404. Verified
+// against dashboard.licentic.org: actve 6/6 -> 200, active 6/6 -> 404.
+// The configured path is tried first, then the known alternates, so this keeps
+// working if Licentic ever corrects the spelling (or if you point at a
+// deployment that already has). The winner is remembered for the process.
+const ACTIVE_LICENSE_PATH_CANDIDATES = (() => {
+  const configured = String(process.env.LMS_ACTIVE_LICENSE_PATH || '').trim();
+  const list = configured ? [configured] : [];
+  for (const p of ['/api/external/actve-license', '/api/external/active-license']) {
+    if (!list.includes(p)) list.push(p);
+  }
+  return list.map((p) => '/' + p.replace(/^\/+/, '').replace(/\/+$/, ''));
+})();
+
+let _resolvedLicensePath = null;   // set once a path is known to work
+
+function productIdQuery() {
+  const productId = String(process.env.LMS_PRODUCT_ID || '').trim();
+  return productId ? `?productId=${encodeURIComponent(productId)}` : '';
+}
+
 const HEARTBEAT_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 
 // ADD these instead:
@@ -35,7 +65,7 @@ let APP_VERSION = '1.0.0';
 try { APP_VERSION = _require('../package.json').version || '1.0.0'; } catch { }
 
 
-// ── HTTP helper ───────────────────────────────────────────────────────────────
+// ------ HTTP helper ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 function lmsFetch(endpoint, options = {}) {
   return new Promise((resolve, reject) => {
@@ -72,27 +102,81 @@ function lmsFetch(endpoint, options = {}) {
   });
 }
 
-// ── Cache helpers ─────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Logging helper. Customer addresses are masked so a log file cannot be used
+// to harvest your customer list, while still being correlatable per request.
+// ---------------------------------------------------------------------------
+function maskEmail(email) {
+  const s = String(email || '');
+  const at = s.indexOf('@');
+  if (at < 1) return s ? `${s.slice(0, 1)}***` : '(empty)';
+  const name = s.slice(0, at);
+  const domain = s.slice(at + 1);
+  const tld = domain.slice(domain.lastIndexOf('.') + 1);
+  return `${name.slice(0, Math.min(2, name.length))}***@***.${tld}`;
+}
+
+// ---------------------------------------------------------------------------
+// Email normalisation / structural validation, shared with the route layer so
+// bad input is rejected with 400 instead of becoming a wasted API call.
+// ---------------------------------------------------------------------------
+const EMAIL_MAX_LENGTH = 254;
+const EMAIL_RE = /^[^\s@,;:<>()[\]\\"]+@[^\s@,;:<>()[\]\\".]+(\.[^\s@,;:<>()[\]\\".]+)+$/;
+
+function normalizeEmail(raw) {
+  if (typeof raw !== 'string') return '';
+  return raw.trim().toLowerCase();
+}
+
+function isStructurallyValidEmail(email) {
+  if (!email || typeof email !== 'string') return false;
+  if (email.length > EMAIL_MAX_LENGTH) return false;
+  if (/\s/.test(email)) return false;
+  return EMAIL_RE.test(email);
+}
+
+// ------ Cache helpers ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 function saveLicenseCache(info) {
   try {
     const dir = path.dirname(LICENSE_CACHE_PATH);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(LICENSE_CACHE_PATH, JSON.stringify({ ...info, cachedAt: new Date().toISOString() }));
+    fs.writeFileSync(LICENSE_CACHE_PATH, JSON.stringify({
+      ...info,
+      // licenseKey is a secret and nothing consumes it - never persist it.
+      licenseKey: undefined,
+      productId: info.productId || String(process.env.LMS_PRODUCT_ID || '').trim(),
+      cachedAt: new Date().toISOString(),
+    }));
   } catch (e) { logger.warn(`[LMS] Cache save failed: ${e.message}`); }
 }
 
-function loadLicenseCache() {
+/**
+ * Load the cached licence, but ONLY when it genuinely belongs to this email and
+ * this product and has not expired. Without those guards a cached approval for
+ * one customer could be handed to another - the cache is never allowed to turn
+ * an unlicensed email into a licensed one.
+ */
+function loadLicenseCache(email) {
   try {
-    if (fs.existsSync(LICENSE_CACHE_PATH))
-      return JSON.parse(fs.readFileSync(LICENSE_CACHE_PATH, 'utf8'));
-  } catch { }
-  return null;
-}
+    if (!fs.existsSync(LICENSE_CACHE_PATH)) return null;
+    const cache = JSON.parse(fs.readFileSync(LICENSE_CACHE_PATH, 'utf8'));
+    if (!cache) return null;
 
-function isCacheFresh(cache) {
-  if (!cache?.cachedAt) return false;
-  return (Date.now() - new Date(cache.cachedAt).getTime()) < 48 * 60 * 60 * 1000;
+    if (email !== undefined) {
+      const wanted = String(email || '').trim().toLowerCase();
+      if (String(cache.customerEmail || '').trim().toLowerCase() !== wanted) return null;
+    }
+
+    const requiredProduct = String(process.env.LMS_PRODUCT_ID || '').trim();
+    if (requiredProduct && String(cache.productId || '').trim() !== requiredProduct) return null;
+
+    if (cache.endDate) {
+      const exp = new Date(cache.endDate).getTime();
+      if (Number.isNaN(exp) || exp < Date.now()) return null;   // expired cache is no cache
+    }
+    return cache;
+  } catch { return null; }
 }
 
 // Force clear registry cache so fresh features are fetched
@@ -100,11 +184,11 @@ function clearRegistryCache() {
   try {
     if (fs.existsSync(REGISTRY_CACHE_PATH)) fs.unlinkSync(REGISTRY_CACHE_PATH);
     if (fs.existsSync(LICENSE_CACHE_PATH)) fs.unlinkSync(LICENSE_CACHE_PATH);
-    logger.info('[LMS] Cache cleared — will re-fetch from LMS on next validation');
+    logger.info('[LMS] Cache cleared --- will re-fetch from LMS on next validation');
   } catch (e) { logger.warn('[LMS] Cache clear failed: ' + e.message); }
 }
 
-// ── Feature Registry cache ────────────────────────────────────────────────────
+// ------ Feature Registry cache ------------------------------------------------------------------------------------------------------------------------------------------------------------
 function saveRegistryCache(data) {
   try {
     const dir = path.dirname(REGISTRY_CACHE_PATH);
@@ -145,15 +229,15 @@ function loadUsageCache() {
   return { companyCount: 0 };
 }
 
-// Called on startup — syncs local cache to match what LMS actually has
+// Called on startup --- syncs local cache to match what LMS actually has
 // Prevents any drift from previous sessions
 function syncUsageCacheFromLMS(lmsCompanyUsage) {
   const count = Number(lmsCompanyUsage) || 0;
   saveUsageCache({ companyCount: count });
-  logger.info(`[LMS] Usage cache synced from LMS — companyCount: ${count}`);
+  logger.info(`[LMS] Usage cache synced from LMS --- companyCount: ${count}`);
 }
 
-// ── Fetch feature registry from LMS ──────────────────────────────────────────
+// ------ Fetch feature registry from LMS ------------------------------------------------------------------------------------------------------------------------------
 // GET /api/feature-registry/:productId  (requires x-api-key)
 // Returns all feature slugs, types and descriptions for this product
 async function fetchFeatureRegistry() {
@@ -172,7 +256,7 @@ async function fetchFeatureRegistry() {
     );
 
     if (status !== 200) {
-      logger.warn(`[LMS] Feature registry fetch failed — HTTP ${status}`);
+      logger.warn(`[LMS] Feature registry fetch failed --- HTTP ${status}`);
       return null;
     }
 
@@ -181,12 +265,12 @@ async function fetchFeatureRegistry() {
     // Shape B: { success: true, features: [...] }
     const registry = data.data || data;
     if (!registry?.features || !Array.isArray(registry.features)) {
-      logger.warn('[LMS] Feature registry response has no features array — response: ' + JSON.stringify(data).substring(0, 200));
+      logger.warn('[LMS] Feature registry response has no features array --- response: ' + JSON.stringify(data).substring(0, 200));
       return null;
     }
 
     saveRegistryCache(registry);
-    logger.info(`[LMS] Feature registry fetched — ${registry.features.length} features for product ${PRODUCT_ID}`);
+    logger.info(`[LMS] Feature registry fetched --- ${registry.features.length} features for product ${PRODUCT_ID}`);
     return registry;
   } catch (err) {
     logger.warn('[LMS] Feature registry fetch error: ' + err.message);
@@ -194,16 +278,16 @@ async function fetchFeatureRegistry() {
   }
 }
 
-// ── Feature parser ────────────────────────────────────────────────────────────
-// Maps LMS LicenseType.features keys → scheduler feature flags
+// ------ Feature parser ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Maps LMS LicenseType.features keys --- scheduler feature flags
 // Admin sets these keys in the LMS dashboard per plan.
 //
 // Expected LMS feature keys:
-//   syncInterval   (number, minutes)   → 5 / 15 / 60
-//   outstandingSync (bool)             → true for all plans
-//   ledgerSync      (bool)             → Custom+
-//   dueDateSync     (bool)             → Custom+
-//   maxCompanies    (number)           → 1 or 3
+//   syncInterval   (number, minutes)   --- 5 / 15 / 60
+//   outstandingSync (bool)             --- true for all plans
+//   ledgerSync      (bool)             --- Custom+
+//   dueDateSync     (bool)             --- Custom+
+//   maxCompanies    (number)           --- 1 or 3
 
 // LMS returns license features as array: [{ featureSlug, featureType, value }]
 // Registry provides the master list of all possible slugs + their types
@@ -213,7 +297,7 @@ function parseFeatures(featuresArray = [], registry = null) {
 
   const map = {};
 
-  // Step 1 — seed all known slugs from registry with disabled defaults
+  // Step 1 --- seed all known slugs from registry with disabled defaults
   // This ensures every slug exists in the map even if not in the license
   if (registry?.features && Array.isArray(registry.features)) {
     for (const regFeature of registry.features) {
@@ -227,7 +311,7 @@ function parseFeatures(featuresArray = [], registry = null) {
     }
   }
 
-  // Step 2 — overlay actual license values on top of registry defaults
+  // Step 2 --- overlay actual license values on top of registry defaults
   for (const f of featuresArray) {
     const slug = f.featureSlug;
     if (!slug) continue;
@@ -243,15 +327,121 @@ function parseFeatures(featuresArray = [], registry = null) {
   return map;
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
+/**
+ * Ask Licentic for an email's active licence.
+ *
+ * Two things the raw endpoint needs handling for:
+ *
+ *  1. Route discovery --- only one spelling of the route is registered, and the
+ *     other answers with a catch-all 404. The catch-all is recognisable because
+ *     its message echoes the path back ("Not Found - /api/..."), so we can tell
+ *     "this route does not exist" apart from "this route ran and found no
+ *     licence" and keep probing in the first case only.
+ *
+ *  2. Transient 404s --- the endpoint intermittently answers
+ *     "License not found for this product" for customers who genuinely hold a
+ *     licence. That is a Licentic-side glitch, so it is retried before being
+ *     believed. Only after retries are exhausted is it a real rejection.
+ */
+async function fetchActiveLicense(normalizedEmail) {
+  const query = productIdQuery();
+  const encoded = encodeURIComponent(normalizedEmail);
+  const TRANSIENT_RETRIES = 2;
+
+  const order = _resolvedLicensePath
+    ? [_resolvedLicensePath, ...ACTIVE_LICENSE_PATH_CANDIDATES.filter((p) => p !== _resolvedLicensePath)]
+    : ACTIVE_LICENSE_PATH_CANDIDATES;
+
+  let lastRouteAbsent = null;
+
+  for (const path of order) {
+    const endpoint = `${path}/${encoded}${query}`;
+    let transientMisses = 0;
+
+    for (let attempt = 0; attempt <= TRANSIENT_RETRIES; attempt++) {
+      let status, data;
+      try {
+        ({ status, data } = await lmsFetch(endpoint, { headers: { 'x-api-key': LMS_API_KEY } }));
+      } catch (netErr) {
+        // Network/timeout: never a rejection, always a verification failure.
+        return { failed: true, reason: `Licentic verification unavailable: ${netErr.message}` };
+      }
+
+      logger.info(`[LMS] Licentic ${path} attempt ${attempt + 1} -> HTTP ${status}`);
+
+      if (status === 200 && data && data.success !== false) {
+        if (_resolvedLicensePath !== path) {
+          logger.info(`[LMS] Resolved Licentic route: ${path}`);
+          _resolvedLicensePath = path;
+        }
+        return { ok: true, status, data, path };
+      }
+
+      const msg = String(data?.message || data?.error || '');
+
+      // Route absent -> the catch-all echoes the requested path back.
+      if (status === 404 && /^not found\s*-\s*\//i.test(msg)) {
+        lastRouteAbsent = path;
+        logger.warn(`[LMS] Route ${path} is not registered on this Licentic deployment`);
+        break;   // try the next spelling
+      }
+
+      if (status === 401) {
+        return { failed: true, reason: 'Licentic rejected the request: API key missing (HTTP 401)' };
+      }
+      if (status === 403) {
+        return { failed: true, reason: 'Licentic rejected the request: API key invalid (HTTP 403)' };
+      }
+      if (status >= 500) {
+        return { failed: true, reason: `Licentic server error (HTTP ${status}) --- verification could not be completed` };
+      }
+
+      // Route exists but returned a business-level miss. Licentic does this
+      // intermittently for real licence holders, so retry before rejecting.
+      if (status === 404) {
+        transientMisses++;
+        if (attempt < TRANSIENT_RETRIES) {
+          logger.warn(`[LMS] Licentic reported "${msg}" --- retrying (${attempt + 1}/${TRANSIENT_RETRIES})`);
+          await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+          continue;
+        }
+        return { rejected: true, reason: msg || 'No active license found for this email', path };
+      }
+
+      return { rejected: true, reason: msg || `No active license found for this email (HTTP ${status})`, path };
+    }
+  }
+
+  if (lastRouteAbsent) {
+    return {
+      failed: true,
+      reason: `Licentic has no active-licence route (tried: ${ACTIVE_LICENSE_PATH_CANDIDATES.join(', ')})`,
+    };
+  }
+  return { failed: true, reason: 'Licentic verification could not be completed' };
+}
+
+// ------ Public API ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 let _heartbeatTimer = null;
 let _currentLicenseId = null;
 
 /**
  * Validate license for the given customer email.
- * Uses: GET /api/public-license/active-license/:email  (no auth)
- * Returns: { valid, plan, features, licenseId, endDate, ... }
+ *
+ * Approves ONLY when Licentic returns an active, unexpired licence for the
+ * configured product (LMS_PRODUCT_ID --- Tally ERP Middleware).
+ *
+ * Ownership (Case B): the Licentic response contains no email field at all ---
+ * I verified the payload end to end and the only identity it carries is
+ * `ownerUserId`, an ObjectId. There is therefore nothing to cross-check
+ * against, and the endpoint's contract is relied upon instead: the route is
+ * keyed by the email in the URL, so the licence returned IS the licence
+ * resolved for that address. `activeLicense.email` is deliberately never
+ * invented or assumed.
+ *
+ * Fails closed: every error path returns valid:false.
+ * Returns: { valid, plan, features, licenseId, endDate, productId, ... }
  */
 async function validateLicense(customerEmail) {
   const normalizedInputEmail = String(customerEmail || '').trim().toLowerCase();
@@ -259,120 +449,158 @@ async function validateLicense(customerEmail) {
     return { valid: false, reason: 'Invalid or missing customer email' };
   }
 
+  const requiredProductId = String(process.env.LMS_PRODUCT_ID || '').trim();
+
   try {
-    const staleCache = loadLicenseCache();
-    if (staleCache && staleCache.features &&
-      staleCache.features['contact-sync'] === false &&
-      staleCache.customerEmail === normalizedInputEmail) {
-      logger.info('[LMS] Stale cache detected — clearing to re-fetch correct features');
-      clearRegistryCache();
+    logger.info(`[LMS] Validating license for ${maskEmail(normalizedInputEmail)} (product ${requiredProductId || 'NOT SET'})`);
+
+    if (!LMS_BASE_URL) {
+      return { valid: false, reason: 'Licentic base URL is not configured', customerEmail: normalizedInputEmail };
+    }
+    if (!requiredProductId) {
+      // Without a product we cannot honour "licence must be for Tally ERP Middleware".
+      return { valid: false, reason: 'Required product is not configured (LMS_PRODUCT_ID)', customerEmail: normalizedInputEmail };
     }
 
-    const registry = await fetchFeatureRegistry();
+    const res = await fetchActiveLicense(normalizedInputEmail);
 
-    logger.info(`[LMS] Validating license for ${normalizedInputEmail}`);
-
-    const productId = process.env.LMS_PRODUCT_ID || '';
-    const query = productId ? `?productId=${encodeURIComponent(productId)}` : '';
-    const { status, data } = await lmsFetch(
-      `/api/external/active-license/${encodeURIComponent(normalizedInputEmail)}${query}`,
-      { headers: { 'x-api-key': LMS_API_KEY } }
-    );
-
-    if (status !== 200 || !data || data.success === false) {
-      const reasonMsg = data?.message || data?.error || `No active license found for ${normalizedInputEmail} (HTTP ${status})`;
-      logger.warn(`[LMS] Licentic verification failed for ${normalizedInputEmail}: ${reasonMsg}`);
+    // Verification could not be completed --- never a rejection disguised as one,
+    // and never an approval.
+    if (res.failed) {
+      logger.error(`[LMS] Verification failed for ${maskEmail(normalizedInputEmail)}: ${res.reason}`);
       return {
-        valid: false,
-        reason: reasonMsg,
-        customerEmail: normalizedInputEmail,
+        valid: false, verified: false, verificationFailed: true,
+        reason: res.reason, customerEmail: normalizedInputEmail,
+      };
+    }
+    if (res.rejected) {
+      logger.warn(`[LMS] No licence for ${maskEmail(normalizedInputEmail)}: ${res.reason}`);
+      return {
+        valid: false, verified: true, verificationFailed: false,
+        reason: res.reason, customerEmail: normalizedInputEmail,
       };
     }
 
-    const license = data.activeLicense || data.license || data.data?.activeLicense || data.data?.license || (data._id || data.status ? data : null);
+    const data = res.data;
 
-    if (!license) {
-      logger.warn(`[LMS] No active license object in Licentic response for ${normalizedInputEmail}`);
+    // A 200 alone is not a pass --- the licence object must exist.
+    const license = data.activeLicense || data.license || data.data?.activeLicense || data.data?.license || null;
+    if (!license || typeof license !== 'object') {
+      logger.warn(`[LMS] HTTP 200 but no activeLicense object for ${maskEmail(normalizedInputEmail)}`);
       return {
-        valid: false,
-        reason: `No active license found for ${normalizedInputEmail}`,
-        customerEmail: normalizedInputEmail,
+        valid: false, verified: true, verificationFailed: false,
+        reason: 'No active license found for this email', customerEmail: normalizedInputEmail,
       };
     }
 
+    // ------ Product must be Tally ERP Middleware ---------------------------------------------------------------------------------------------------
+    // Licentic returns productId as a populated object on the licence and as a
+    // plain string on the licenceType; both are accepted.
+    const licenseProductId =
+      (typeof license.productId === 'string' ? license.productId : license.productId?._id) ||
+      license.product_id ||
+      license.licenseTypeId?.productId ||
+      license.licenseTypeId?.product?._id ||
+      null;
+
+    if (!licenseProductId) {
+      logger.warn('[LMS] Licence exposes no productId --- cannot confirm it is Tally ERP Middleware');
+      return {
+        valid: false, verified: true, verificationFailed: false,
+        reason: 'Could not confirm the license belongs to the required product',
+        customerEmail: normalizedInputEmail,
+      };
+    }
+    if (String(licenseProductId) !== requiredProductId) {
+      logger.warn(`[LMS] Wrong product: licence is "${licenseProductId}", required "${requiredProductId}"`);
+      return {
+        valid: false, verified: true, verificationFailed: false,
+        reason: 'Active license is for a different product',
+        customerEmail: normalizedInputEmail,
+      };
+    }
+    logger.info(`[LMS] Product OK: ${requiredProductId}`);
+
+    // ------ Status must be active ---------------------------------------------------------------------------------------------------------------------------------------------
     const rawStatus = String(license.status || license.licenseStatus || '').trim().toLowerCase();
-    const isStatusActive = rawStatus === 'active' || license.valid === true || license.isActive === true;
-    if (!isStatusActive) {
-      logger.warn(`[LMS] License for ${normalizedInputEmail} status is "${license.status || 'inactive'}"`);
+    const statusOk = rawStatus === 'active'
+      || license.valid === true
+      || license.isActive === true;
+    if (!statusOk) {
+      logger.warn(`[LMS] Licence status is "${rawStatus || 'inactive'}"`);
       return {
-        valid: false,
-        reason: `License status is "${license.status || 'inactive'}" (not active)`,
+        valid: false, verified: true, verificationFailed: false,
+        reason: `License status is "${license.status || license.licenseStatus || 'inactive'}" (not active)`,
         customerEmail: normalizedInputEmail,
       };
     }
+    logger.info(`[LMS] Status OK: ${rawStatus || 'active'}`);
 
-    if (license.endDate || license.expiresAt || license.expirationDate) {
-      const expDate = new Date(license.endDate || license.expiresAt || license.expirationDate);
-      if (!isNaN(expDate.getTime()) && expDate.getTime() < Date.now()) {
-        logger.warn(`[LMS] License for ${normalizedInputEmail} expired on ${expDate.toISOString()}`);
-        return {
-          valid: false,
-          reason: `License expired on ${expDate.toLocaleDateString("en-IN")}`,
-          customerEmail: normalizedInputEmail,
-        };
-      }
-    }
-
-    const returnedOwnerEmail = String(
-      license.customerEmail ||
-      license.email ||
-      license.user?.email ||
-      license.customer?.email ||
-      license.ownerEmail ||
-      license.userId?.email ||
-      normalizedInputEmail
-    ).trim().toLowerCase();
-
-    if (returnedOwnerEmail !== normalizedInputEmail) {
-      logger.warn(`[LMS] Email mismatch: input "${normalizedInputEmail}" vs license owner "${returnedOwnerEmail}"`);
+    // ------ Expiry ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    const expiryRaw = license.endDate || license.expiresAt || license.expirationDate;
+    if (!expiryRaw) {
+      logger.warn('[LMS] Licence carries no endDate --- cannot confirm it is unexpired');
       return {
-        valid: false,
-        reason: `License belongs to a different email (${returnedOwnerEmail})`,
+        valid: false, verified: true, verificationFailed: false,
+        reason: 'Could not read the license expiry date',
         customerEmail: normalizedInputEmail,
       };
     }
+    const expDate = new Date(expiryRaw);
+    if (isNaN(expDate.getTime())) {
+      logger.warn(`[LMS] Licence endDate is unreadable: "${expiryRaw}"`);
+      return {
+        valid: false, verified: true, verificationFailed: false,
+        reason: 'Could not read the license expiry date',
+        customerEmail: normalizedInputEmail,
+      };
+    }
+    if (expDate.getTime() < Date.now()) {
+      logger.warn(`[LMS] Licence expired on ${expDate.toISOString()}`);
+      return {
+        valid: false, verified: true, verificationFailed: false,
+        reason: `License expired on ${expDate.toLocaleDateString("en-IN")}`,
+        customerEmail: normalizedInputEmail,
+      };
+    }
+    logger.info(`[LMS] Expiry OK: ${expDate.toISOString()}`);
 
-    const licType = license.licenseTypeId || {};
-    const rawFeatures = license.features || licType.features || [];
+    // All checks passed. Ownership relies on the endpoint being keyed by the
+    // requested email --- see the note above validateLicense().
+    const registry = await fetchFeatureRegistry();
+    const licType = (typeof license.licenseTypeId === 'object' && license.licenseTypeId) ? license.licenseTypeId : {};
+    const rawFeatures = license.features || licType.features || data.features || [];
     const features = parseFeatures(rawFeatures, registry);
-
-    const lmsCompanyUsage = license.usageStats?.['company-limit']
-      ?? license.usage?.['company-limit']
-      ?? license.currentUsage?.companyCount
-      ?? null;
 
     const result = {
       valid: true,
-      licenseId: license._id || license.id || license.licenseId,
-      licenseKey: license.licenseKey || license.key,
-      userId: license.userId || license.user?._id || license._id,
+      verified: true,
+      verificationFailed: false,
+      licenseId: license._id || license.id || license.licenseId || null,
+      productId: requiredProductId,
+      productName: (typeof license.productId === 'object' && license.productId?.name) || licType.product?.name || null,
       plan: licType.name || license.planName || license.plan || 'Active License',
       status: 'active',
-      endDate: license.endDate || license.expiresAt || license.expirationDate || null,
+      endDate: expiryRaw,
       features,
       registry,
       customerEmail: normalizedInputEmail,
-      lmsCompanyUsage,
+      appVersion: APP_VERSION,
     };
 
     saveLicenseCache(result);
     _currentLicenseId = result.licenseId;
-    logger.info(`[LMS] License verified MATCH for ${normalizedInputEmail} — Plan: ${result.plan}`);
+    logger.info(`[LMS] APPROVED ${maskEmail(normalizedInputEmail)} --- ${result.plan} until ${expDate.toISOString()}`);
     return result;
 
   } catch (err) {
-    logger.error(`[LMS] validateLicense exception: ${err.message}`);
-    return { valid: false, reason: `Verification failed: ${err.message}`, customerEmail: normalizedInputEmail };
+    // Fail closed. An exception is never turned into an approval.
+    logger.error(`[LMS] validateLicense exception for ${maskEmail(normalizedInputEmail)}: ${err.message}`);
+    return {
+      valid: false, verified: false, verificationFailed: true,
+      reason: 'License verification failed',
+      customerEmail: normalizedInputEmail,
+    };
   }
 }
 
@@ -384,7 +612,7 @@ async function sendHeartbeat(licenseId, usageFeatures = []) {
   const id = licenseId || _currentLicenseId;
   if (!id) return;
 
-  // Get userId from license cache — LMS expects the user's _id, not licenseId
+  // Get userId from license cache --- LMS expects the user's _id, not licenseId
   const cache = loadLicenseCache();
   const userId = cache?.userId || cache?.licenseId || id;
 
@@ -419,7 +647,7 @@ function startHeartbeat(licenseId) {
 async function updateCompanyUsage(newCount) {
   const id = _currentLicenseId;
   if (!id) {
-    logger.warn('[LMS] Cannot update company usage — no active licenseId');
+    logger.warn('[LMS] Cannot update company usage --- no active licenseId');
     return;
   }
 
@@ -428,7 +656,7 @@ async function updateCompanyUsage(newCount) {
   const delta = newCount - prevCount;
 
   if (delta === 0) {
-    logger.info(`[LMS] company-limit unchanged (${newCount}) — skipping`);
+    logger.info(`[LMS] company-limit unchanged (${newCount}) --- skipping`);
     return;
   }
 
@@ -436,7 +664,7 @@ async function updateCompanyUsage(newCount) {
   const userId = cache?.licenseId || id;
 
   try {
-    logger.info(`[LMS] Updating company-limit — prev: ${prevCount}, new: ${newCount}, delta: ${delta > 0 ? '+' : ''}${delta}`);
+    logger.info(`[LMS] Updating company-limit --- prev: ${prevCount}, new: ${newCount}, delta: ${delta > 0 ? '+' : ''}${delta}`);
 
     // Save cache BEFORE the API call so rapid sequential calls
     // read the updated count and don't recalculate wrong deltas
@@ -450,11 +678,11 @@ async function updateCompanyUsage(newCount) {
       }
     });
     if (status === 200) {
-      logger.info(`[LMS] company-limit updated: ${prevCount} → ${newCount}`);
+      logger.info(`[LMS] company-limit updated: ${prevCount} --- ${newCount}`);
     } else {
       // Revert cache if LMS call failed
       saveUsageCache({ companyCount: prevCount });
-      logger.warn(`[LMS] company-limit update failed — HTTP ${status}, reverted cache`);
+      logger.warn(`[LMS] company-limit update failed --- HTTP ${status}, reverted cache`);
     }
   } catch (e) {
     // Revert cache on error
@@ -467,7 +695,7 @@ function clearHeartbeatInterval() {
   if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null; }
 }
 
-// ── Periodic re-validation ────────────────────────────────────────────────────
+// ------ Periodic re-validation ------------------------------------------------------------------------------------------------------------------------------------------------------------
 let _revalidateTimer = null;
 
 function startRevalidation(customerEmail, onResult) {
@@ -483,4 +711,9 @@ function stopRevalidation() {
   if (_revalidateTimer) { clearInterval(_revalidateTimer); _revalidateTimer = null; }
 }
 
-export { validateLicense, fetchFeatureRegistry, startHeartbeat, startRevalidation, stopRevalidation, clearHeartbeatInterval, parseFeatures, loadLicenseCache, loadUsageCache, saveUsageCache, syncUsageCacheFromLMS, clearRegistryCache, updateCompanyUsage };
+export {
+  validateLicense, fetchFeatureRegistry, startHeartbeat, startRevalidation,
+  stopRevalidation, clearHeartbeatInterval, parseFeatures, loadLicenseCache,
+  loadUsageCache, saveUsageCache, syncUsageCacheFromLMS, clearRegistryCache,
+  updateCompanyUsage, normalizeEmail, isStructurallyValidEmail, maskEmail,
+};
