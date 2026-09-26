@@ -6,7 +6,7 @@ const http    = require("http");
 let mainWindow;
 let backendProcess;
 
-const PORT = 4000;
+const PORT = 5000;
 
 // ── Resolve backend EXE path ──────────────────────────────────────────────────
 // In production (installed): resources/backend/tally-middleware-backend.exe

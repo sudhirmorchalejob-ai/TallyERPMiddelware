@@ -9,50 +9,50 @@
  * External key : x-api-key: my-secret-key-123  (for customer-sync routes only)
  */
 
-import https  from 'https';
-import http   from 'http';
-import fs     from 'fs';
-import path   from 'path';
+import https from 'https';
+import http from 'http';
+import fs from 'fs';
+import path from 'path';
 import { logger } from '../logs/logger.js';
 
-const LMS_BASE_URL            = process.env.LMS_BASE_URL || 'https://dashboard.licentic.org';
-const LMS_API_KEY             = process.env.LMS_API_KEY  || 'my-secret-key-123';
+const LMS_BASE_URL = process.env.LMS_BASE_URL || 'https://dashboard.licentic.org';
+const LMS_API_KEY = process.env.LMS_API_KEY || 'my-secret-key-123';
 const PRODUCT_ID = '6a23c644247319b4b7bf7006';
-const HEARTBEAT_INTERVAL_MS   = 30 * 60 * 1000; // 30 minutes
+const HEARTBEAT_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 
 // ADD these instead:
 import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
-const __dirname  = path.dirname(__filename);
+const __dirname = path.dirname(__filename);
 
-const LICENSE_CACHE_PATH  = path.join(__dirname, '../logs/license-cache.json');
+const LICENSE_CACHE_PATH = path.join(__dirname, '../logs/license-cache.json');
 const REGISTRY_CACHE_PATH = path.join(__dirname, '../logs/feature-registry-cache.json');
-const USAGE_CACHE_PATH    = path.join(__dirname, '../logs/usage-cache.json');
+const USAGE_CACHE_PATH = path.join(__dirname, '../logs/usage-cache.json');
 
 import { createRequire } from 'module';
 const _require = createRequire(import.meta.url);
 let APP_VERSION = '1.0.0';
-try { APP_VERSION = _require('../package.json').version || '1.0.0'; } catch {}
+try { APP_VERSION = _require('../package.json').version || '1.0.0'; } catch { }
 
 
 // ── HTTP helper ───────────────────────────────────────────────────────────────
 
 function lmsFetch(endpoint, options = {}) {
   return new Promise((resolve, reject) => {
-    const url   = new URL(LMS_BASE_URL + endpoint);
-    const lib   = url.protocol === 'https:' ? https : http;
-    const body  = options.body ? JSON.stringify(options.body) : undefined;
+    const url = new URL(LMS_BASE_URL + endpoint);
+    const lib = url.protocol === 'https:' ? https : http;
+    const body = options.body ? JSON.stringify(options.body) : undefined;
 
     const reqOptions = {
       hostname: url.hostname,
-      port:     url.port || (url.protocol === 'https:' ? 443 : 80),
-      path:     url.pathname + url.search,
-      method:   options.method || 'GET',
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: url.pathname + url.search,
+      method: options.method || 'GET',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key':    LMS_API_KEY,          
+        'x-api-key': LMS_API_KEY,
         ...(body ? { 'Content-Length': Buffer.byteLength(body) } : {}),
-        ...(options.headers || {}),           
+        ...(options.headers || {}),
       },
     };
 
@@ -60,7 +60,7 @@ function lmsFetch(endpoint, options = {}) {
       let data = '';
       res.on('data', (chunk) => (data += chunk));
       res.on('end', () => {
-        try   { resolve({ status: res.statusCode, data: JSON.parse(data) }); }
+        try { resolve({ status: res.statusCode, data: JSON.parse(data) }); }
         catch { resolve({ status: res.statusCode, data: { raw: data } }); }
       });
     });
@@ -86,7 +86,7 @@ function loadLicenseCache() {
   try {
     if (fs.existsSync(LICENSE_CACHE_PATH))
       return JSON.parse(fs.readFileSync(LICENSE_CACHE_PATH, 'utf8'));
-  } catch {}
+  } catch { }
   return null;
 }
 
@@ -99,9 +99,9 @@ function isCacheFresh(cache) {
 function clearRegistryCache() {
   try {
     if (fs.existsSync(REGISTRY_CACHE_PATH)) fs.unlinkSync(REGISTRY_CACHE_PATH);
-    if (fs.existsSync(LICENSE_CACHE_PATH))  fs.unlinkSync(LICENSE_CACHE_PATH);
+    if (fs.existsSync(LICENSE_CACHE_PATH)) fs.unlinkSync(LICENSE_CACHE_PATH);
     logger.info('[LMS] Cache cleared — will re-fetch from LMS on next validation');
-  } catch(e) { logger.warn('[LMS] Cache clear failed: ' + e.message); }
+  } catch (e) { logger.warn('[LMS] Cache clear failed: ' + e.message); }
 }
 
 // ── Feature Registry cache ────────────────────────────────────────────────────
@@ -113,7 +113,7 @@ function saveRegistryCache(data) {
       data,
       cachedAt: Date.now()
     }));
-  } catch(e) { logger.warn('[LMS] Registry cache save failed: ' + e.message); }
+  } catch (e) { logger.warn('[LMS] Registry cache save failed: ' + e.message); }
 }
 
 function loadRegistryCache() {
@@ -125,7 +125,7 @@ function loadRegistryCache() {
         return raw.data;
       }
     }
-  } catch {}
+  } catch { }
   return null;
 }
 
@@ -134,14 +134,14 @@ function saveUsageCache(data) {
     const dir = path.dirname(USAGE_CACHE_PATH);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(USAGE_CACHE_PATH, JSON.stringify(data));
-  } catch {}
+  } catch { }
 }
 
 function loadUsageCache() {
   try {
     if (fs.existsSync(USAGE_CACHE_PATH))
       return JSON.parse(fs.readFileSync(USAGE_CACHE_PATH, 'utf8'));
-  } catch {}
+  } catch { }
   return { companyCount: 0 };
 }
 
@@ -188,7 +188,7 @@ async function fetchFeatureRegistry() {
     saveRegistryCache(registry);
     logger.info(`[LMS] Feature registry fetched — ${registry.features.length} features for product ${PRODUCT_ID}`);
     return registry;
-  } catch(err) {
+  } catch (err) {
     logger.warn('[LMS] Feature registry fetch error: ' + err.message);
     return null;
   }
@@ -245,8 +245,8 @@ function parseFeatures(featuresArray = [], registry = null) {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-let _heartbeatTimer    = null;
-let _currentLicenseId  = null;
+let _heartbeatTimer = null;
+let _currentLicenseId = null;
 
 /**
  * Validate license for the given customer email.
@@ -254,111 +254,125 @@ let _currentLicenseId  = null;
  * Returns: { valid, plan, features, licenseId, endDate, ... }
  */
 async function validateLicense(customerEmail) {
-  if (!customerEmail) return { valid: false, reason: 'No customer email configured' };
+  const normalizedInputEmail = String(customerEmail || '').trim().toLowerCase();
+  if (!normalizedInputEmail || !normalizedInputEmail.includes('@')) {
+    return { valid: false, reason: 'Invalid or missing customer email' };
+  }
 
   try {
-    // Clear stale cache if it has wrong feature values (one-time fix)
     const staleCache = loadLicenseCache();
-    if (staleCache && staleCache.features && 
-        staleCache.features['contact-sync'] === false &&
-        staleCache.customerEmail === customerEmail) {
+    if (staleCache && staleCache.features &&
+      staleCache.features['contact-sync'] === false &&
+      staleCache.customerEmail === normalizedInputEmail) {
       logger.info('[LMS] Stale cache detected — clearing to re-fetch correct features');
       clearRegistryCache();
     }
 
-    // Step 1 — fetch feature registry first (dynamic, cached 24h)
     const registry = await fetchFeatureRegistry();
 
-    logger.info(`[LMS] Validating license for ${customerEmail}`);
+    logger.info(`[LMS] Validating license for ${normalizedInputEmail}`);
 
-    // Step 2 — fetch active license for this email + product
+    const productId = process.env.LMS_PRODUCT_ID || '';
+    const query = productId ? `?productId=${encodeURIComponent(productId)}` : '';
     const { status, data } = await lmsFetch(
-      `/api/external/active-license/${encodeURIComponent(customerEmail)}?productId=${PRODUCT_ID}`,
+      `/api/external/active-license/${encodeURIComponent(normalizedInputEmail)}${query}`,
       { headers: { 'x-api-key': LMS_API_KEY } }
     );
 
-    // LMS returns activeLicense (not license)
-    const license = data.activeLicense || data.license;
-
-    if (status !== 200 || !license) {
-      const cache = loadLicenseCache();
-      if (cache && isCacheFresh(cache) && cache.customerEmail === customerEmail) {
-        logger.warn('[LMS] Unreachable — using cached license (48h grace)');
-        return { ...cache, fromCache: true };
-      }
-      logger.warn(`[LMS] Server returned ${status} — Bypassing for offline mode.`);
+    if (status !== 200 || !data || data.success === false) {
+      const reasonMsg = data?.message || data?.error || `No active license found for ${normalizedInputEmail} (HTTP ${status})`;
+      logger.warn(`[LMS] Licentic verification failed for ${normalizedInputEmail}: ${reasonMsg}`);
       return {
-        valid: true,
-        plan: 'Lifetime Enterprise',
-        endDate: '2099-12-31T23:59:59.000Z',
-        customerEmail,
-        features: {
-          'company-limit': 999,
-          'contact-sync': true,
-          'item-sync': true,
-          'auto-sync': true,
-          'multi-company': true,
-          'date-range': true
-        },
-        licenseId: 'offline-bypass',
-        licenseKey: 'offline-bypass',
+        valid: false,
+        reason: reasonMsg,
+        customerEmail: normalizedInputEmail,
       };
     }
 
-    const licType     = license.licenseTypeId || {};
-    // Features are directly on activeLicense.features as array
-    // and also on licenseTypeId.features — prefer the direct one as it has values
-    const rawFeatures = license.features || licType.features || [];
+    const license = data.activeLicense || data.license || data.data?.activeLicense || data.data?.license || (data._id || data.status ? data : null);
 
-    // Step 3 — merge registry defaults + license values into flat slug map
+    if (!license) {
+      logger.warn(`[LMS] No active license object in Licentic response for ${normalizedInputEmail}`);
+      return {
+        valid: false,
+        reason: `No active license found for ${normalizedInputEmail}`,
+        customerEmail: normalizedInputEmail,
+      };
+    }
+
+    const rawStatus = String(license.status || license.licenseStatus || '').trim().toLowerCase();
+    const isStatusActive = rawStatus === 'active' || license.valid === true || license.isActive === true;
+    if (!isStatusActive) {
+      logger.warn(`[LMS] License for ${normalizedInputEmail} status is "${license.status || 'inactive'}"`);
+      return {
+        valid: false,
+        reason: `License status is "${license.status || 'inactive'}" (not active)`,
+        customerEmail: normalizedInputEmail,
+      };
+    }
+
+    if (license.endDate || license.expiresAt || license.expirationDate) {
+      const expDate = new Date(license.endDate || license.expiresAt || license.expirationDate);
+      if (!isNaN(expDate.getTime()) && expDate.getTime() < Date.now()) {
+        logger.warn(`[LMS] License for ${normalizedInputEmail} expired on ${expDate.toISOString()}`);
+        return {
+          valid: false,
+          reason: `License expired on ${expDate.toLocaleDateString("en-IN")}`,
+          customerEmail: normalizedInputEmail,
+        };
+      }
+    }
+
+    const returnedOwnerEmail = String(
+      license.customerEmail ||
+      license.email ||
+      license.user?.email ||
+      license.customer?.email ||
+      license.ownerEmail ||
+      license.userId?.email ||
+      normalizedInputEmail
+    ).trim().toLowerCase();
+
+    if (returnedOwnerEmail !== normalizedInputEmail) {
+      logger.warn(`[LMS] Email mismatch: input "${normalizedInputEmail}" vs license owner "${returnedOwnerEmail}"`);
+      return {
+        valid: false,
+        reason: `License belongs to a different email (${returnedOwnerEmail})`,
+        customerEmail: normalizedInputEmail,
+      };
+    }
+
+    const licType = license.licenseTypeId || {};
+    const rawFeatures = license.features || licType.features || [];
     const features = parseFeatures(rawFeatures, registry);
 
-    // Extract current company usage from LMS response
-    // Try multiple possible response locations
     const lmsCompanyUsage = license.usageStats?.['company-limit']
-                         ?? license.usage?.['company-limit']
-                         ?? license.currentUsage?.companyCount
-                         ?? null;
+      ?? license.usage?.['company-limit']
+      ?? license.currentUsage?.companyCount
+      ?? null;
 
     const result = {
-      valid         : license.status === 'active',
-      licenseId     : license._id,
-      licenseKey    : license.licenseKey,
-      userId        : license.userId || license.user?._id || license._id, // store for heartbeat
-      plan          : licType.name || 'Unknown',
-      status        : license.status,
-      endDate       : license.endDate,
+      valid: true,
+      licenseId: license._id || license.id || license.licenseId,
+      licenseKey: license.licenseKey || license.key,
+      userId: license.userId || license.user?._id || license._id,
+      plan: licType.name || license.planName || license.plan || 'Active License',
+      status: 'active',
+      endDate: license.endDate || license.expiresAt || license.expirationDate || null,
       features,
       registry,
-      customerEmail,
+      customerEmail: normalizedInputEmail,
       lmsCompanyUsage,
     };
 
-    if (result.valid) {
-      saveLicenseCache(result);
-      _currentLicenseId = result.licenseId;
-      logger.info(`[LMS] License valid — Plan: ${result.plan} | expires: ${new Date(result.endDate).toLocaleDateString('en-IN')} | features: ${Object.keys(features).length}`);
-
-      // Log which features are enabled for this plan
-      const enabled = Object.entries(features)
-        .filter(([, v]) => v === true || (typeof v === 'number' && v > 0))
-        .map(([k, v]) => `${k}=${v}`)
-        .join(', ');
-      logger.info(`[LMS] Enabled features: ${enabled}`);
-    } else {
-      logger.warn(`[LMS] License status: "${license.status}"`);
-    }
-
+    saveLicenseCache(result);
+    _currentLicenseId = result.licenseId;
+    logger.info(`[LMS] License verified MATCH for ${normalizedInputEmail} — Plan: ${result.plan}`);
     return result;
 
   } catch (err) {
-    logger.error(`[LMS] validateLicense error: ${err.message}`);
-    const cache = loadLicenseCache();
-    if (cache && isCacheFresh(cache) && cache.customerEmail === customerEmail) {
-      logger.warn('[LMS] Network error — using cached license (48h grace)');
-      return { ...cache, fromCache: true };
-    }
-    return { valid: false, reason: err.message };
+    logger.error(`[LMS] validateLicense exception: ${err.message}`);
+    return { valid: false, reason: `Verification failed: ${err.message}`, customerEmail: normalizedInputEmail };
   }
 }
 
@@ -409,21 +423,21 @@ async function updateCompanyUsage(newCount) {
     return;
   }
 
-  const usage      = loadUsageCache();
-  const prevCount  = usage.companyCount || 0;
-  const delta      = newCount - prevCount;
+  const usage = loadUsageCache();
+  const prevCount = usage.companyCount || 0;
+  const delta = newCount - prevCount;
 
   if (delta === 0) {
     logger.info(`[LMS] company-limit unchanged (${newCount}) — skipping`);
     return;
   }
 
-  const cache  = loadLicenseCache();
+  const cache = loadLicenseCache();
   const userId = cache?.licenseId || id;
 
   try {
     logger.info(`[LMS] Updating company-limit — prev: ${prevCount}, new: ${newCount}, delta: ${delta > 0 ? '+' : ''}${delta}`);
-    
+
     // Save cache BEFORE the API call so rapid sequential calls
     // read the updated count and don't recalculate wrong deltas
     saveUsageCache({ companyCount: newCount });
@@ -442,7 +456,7 @@ async function updateCompanyUsage(newCount) {
       saveUsageCache({ companyCount: prevCount });
       logger.warn(`[LMS] company-limit update failed — HTTP ${status}, reverted cache`);
     }
-  } catch(e) {
+  } catch (e) {
     // Revert cache on error
     saveUsageCache({ companyCount: prevCount });
     logger.warn(`[LMS] updateCompanyUsage error: ${e.message}`);

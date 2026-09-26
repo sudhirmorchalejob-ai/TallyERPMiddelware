@@ -30,4 +30,28 @@ router.post("/license/verify-email", async (req, res) => {
   }
 });
 
+/**
+ * GET /api/license/status?email=...
+ * Returns current license status for a given email or loaded cache
+ */
+router.get("/license/status", async (req, res) => {
+  const email = req.query.email;
+  if (!email) {
+    return res.json({ valid: false, reason: "Email query param required" });
+  }
+  try {
+    const result = await validateLicense(email.trim().toLowerCase());
+    res.json({
+      valid: result.valid,
+      plan: result.plan,
+      endDate: result.endDate,
+      customerEmail: result.customerEmail,
+      features: result.features || {},
+      reason: result.reason || null,
+    });
+  } catch (e) {
+    res.status(500).json({ valid: false, reason: e.message });
+  }
+});
+
 export default router;

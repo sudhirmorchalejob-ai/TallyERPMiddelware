@@ -18,7 +18,7 @@ export function useConnection() {
         tallyLatency: ping?.latencyMs ?? null,
         tallyError: ping?.error ?? null,
         tallyUrl: ping?.url ?? "http://localhost:9000",
-        error: !health ? "Backend not running (port 4000)" : null,
+        error: !health ? "Backend not running (port 5000)" : null,
       });
     } catch (e) {
       setState({ loading: false, backendOk: false, tallyConnected: false, error: e.message });
