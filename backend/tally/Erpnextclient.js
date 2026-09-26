@@ -471,15 +471,15 @@ async function ensureAddress(client, partyName, partyType, ledger) {
     address_title: partyName,
     address_type: "Billing",
     address_line1: addressLine1,
+    address_line2: "", // Explicitly clear any existing value
     city: cityVal || stateVal,
     state: stateVal,
     country: ledger.country || "India",
     links: [{ link_doctype: partyType, link_name: partyName }],
+    pincode: pincodeVal || "",
+    phone: ledger.phone || "",
+    email_id: ledger.email || "",
   };
-
-  if (pincodeVal) doc.pincode = pincodeVal;
-  if (ledger.phone) doc.phone = ledger.phone;
-  if (ledger.email) doc.email_id = ledger.email;
 
   try {
     let existingName = await findPartyAddress(client, partyType, partyName);
