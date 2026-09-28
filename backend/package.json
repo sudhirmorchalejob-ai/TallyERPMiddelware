@@ -56,8 +56,15 @@
       "electron.cjs",
       "assets/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "dist",
+        "to": "backend",
+        "filter": ["**/*"]
+      }
+    ],
     "win": {
-      "target": "nsis",
+      "target": ["portable", "nsis"],
       "icon": "assets/icon.png"
     },
     "nsis": {

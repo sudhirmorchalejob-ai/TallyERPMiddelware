@@ -13,8 +13,8 @@ const PORT = 5000;
 // In dev: ../dist/tally-middleware-backend.exe
 function getBackendPath() {
   if (app.isPackaged) {
-    // When installed, the backend folder sits next to the Electron exe
-    return path.join(path.dirname(app.getPath("exe")), "backend", "tally-middleware-backend.exe");
+    // When packaged, extraResources are placed in process.resourcesPath
+    return path.join(process.resourcesPath, "backend", "tally-middleware-backend.exe");
   }
   return path.join(__dirname, "dist", "tally-middleware-backend.exe");
 }
