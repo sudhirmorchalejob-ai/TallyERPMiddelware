@@ -14,17 +14,24 @@
  */
 
 import axios from "axios";
+import Agent from "agentkeepalive";
 import { parseStringPromise } from "xml2js";
 import { config } from "../config/config.js";
 import { logger } from "../logs/logger.js";
 
+// ── HTTP agent with keep-alive for localhost Tally ────────────────────────────
+const httpAgent = new Agent({
+  maxSockets: 10,
+  maxFreeSockets: 5,
+  timeout: 600_000,          // 10 min — matches agent.cjs
+  freeSocketTimeout: 30_000,
+});
+
 const tallyAxios = axios.create({
   baseURL: config.tally.url,
-  headers: { 
-    "Content-Type": "text/xml",
-    "Connection": "close"
-  },
+  headers: { "Content-Type": "text/xml" },
   timeout: 600_000,          // 10 min — large voucher sets can take several minutes
+  httpAgent,
 });
 
 // ── XML / value helpers ───────────────────────────────────────────────────────

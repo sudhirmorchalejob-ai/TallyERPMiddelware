@@ -84,7 +84,52 @@ function createWindow() {
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
-  // Kill any existing backend on port 4000 before starting fresh
+  // ── Fresh Installation Check ────────────────────────────────────────────────
+  try {
+    const { session } = require("electron");
+    const fs = require("fs");
+    const exePath = app.getPath("exe");
+    const exeBirthtime = fs.statSync(exePath).birthtimeMs;
+    const userDataPath = app.getPath("userData");
+    const installIdPath = path.join(userDataPath, "install_id.txt");
+    
+    let isFreshInstall = false;
+    if (fs.existsSync(installIdPath)) {
+      const savedBirthtime = parseFloat(fs.readFileSync(installIdPath, "utf8"));
+      if (savedBirthtime !== exeBirthtime) {
+        isFreshInstall = true;
+      }
+    } else {
+      isFreshInstall = true;
+    }
+
+    if (isFreshInstall) {
+      console.log("Fresh installation detected! Clearing previous user data...");
+      
+      // 1. Clear Electron local storage (frontend settings, license, etc)
+      await session.defaultSession.clearStorageData({
+        storages: ['localstorage', 'cookies', 'indexdb', 'caches']
+      });
+
+      // 2. Clear Backend Configuration Data
+      const backendDataOld = path.join(app.getPath("appData"), "TallyERPNextIntegration");
+      const backendDataNew = path.join(app.getPath("appData"), "Tally ERPNext Integration", "data");
+      
+      if (fs.existsSync(backendDataOld)) {
+        fs.rmSync(backendDataOld, { recursive: true, force: true });
+      }
+      if (fs.existsSync(backendDataNew)) {
+        fs.rmSync(backendDataNew, { recursive: true, force: true });
+      }
+
+      // Save the new birthtime so normal restarts persist data
+      fs.writeFileSync(installIdPath, exeBirthtime.toString(), "utf8");
+    }
+  } catch (err) {
+    console.error("Failed to check for fresh installation:", err.message);
+  }
+
+  // Kill any existing backend on port 5000 before starting fresh
   try {
     await new Promise((resolve) => {
       http.get(`http://localhost:${PORT}`, () => {

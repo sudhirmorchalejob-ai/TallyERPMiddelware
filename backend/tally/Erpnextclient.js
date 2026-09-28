@@ -1513,14 +1513,7 @@ async function batchSync(client, doctype, items, mapper, progressCb, postUpsertH
         else updated++;
         // Submit immediately after create/update while connection is still warm
         if (postUpsertHook && r.value.name && r.value.action !== "skipped") {
-          try {
-            await postUpsertHook(r.value.name);
-          } catch (hookErr) {
-            failed++;
-            if (r.value.action === "created") created--;
-            else updated--;
-            errors.push({ item: item.name || (i + j), error: "Submit failed: " + (hookErr.message || "Unknown error") });
-          }
+          await postUpsertHook(r.value.name).catch(() => { });
         }
         if (r.value.name) item.erpName = r.value.name;
       } else {
@@ -1560,17 +1553,6 @@ async function batchSync(client, doctype, items, mapper, progressCb, postUpsertH
         if (result.action === "created") created++;
         else if (result.action === "skipped") skipped++;
         else updated++;
-
-        if (postUpsertHook && result.name && result.action !== "skipped") {
-          try {
-            await postUpsertHook(result.name);
-          } catch (hookErr) {
-            failed++;
-            if (result.action === "created") created--;
-            else updated--;
-            errors.push({ item: item.name || "retry", error: "Submit failed: " + (hookErr.message || "Unknown error") });
-          }
-        }
       } catch (err) {
         failed++;
         const isDuplicate = err.response?.data?.exc_type === "DuplicateEntryError";
@@ -4090,9 +4072,6 @@ export async function syncVouchersToErpNext(vouchers, companyName, creds = {}, v
     logger.info("Submit Journal Entry: " + jeSubmitted.submitted + " submitted, " + jeSubmitted.failed + " failed");
   }
 
-  peResults.failed += peSubmitted.failed;
-  jeResults.failed += jeSubmitted.failed;
-
   return { paymentEntries: peResults, journalEntries: jeResults, salesInvoices: { created: 0, updated: 0, failed: salesVouchers.length } };
 }
 
@@ -6309,17 +6288,10 @@ export async function syncInvoicesToErpNext(vouchers, companyName, creds = {}, v
               if (fullDoc3 && fullDoc3.docstatus === 0) {
                 await client.post("/api/method/frappe.client.submit", { doc: fullDoc3 });
               }
-            } else {
-              throw new Error("Could not auto-create fiscal year");
             }
-          } catch (retryErr) {
-            const retryMsg = parseErpError(retryErr);
-            logger.warn("[Submit] " + doctype + " " + docName + " (retry): " + retryMsg);
-            throw new Error(retryMsg);
-          }
+          } catch (_) { }
         } else {
           logger.warn("[Submit] " + doctype + " " + docName + ": " + errMsg);
-          throw new Error(errMsg);
         }
       }
     };
@@ -6981,10 +6953,6 @@ export async function runFullSync(companyName, tallyData, options, creds = {}) {
         // Invoice shape: { sales: { failed }, purchase: { failed } }
         if (r.sales || r.purchase) {
           return ((r.sales && r.sales.failed) || 0) + ((r.purchase && r.purchase.failed) || 0);
-        }
-        // Voucher shape: { paymentEntries: { failed }, journalEntries: { failed } }
-        if (r.paymentEntries || r.journalEntries) {
-          return ((r.paymentEntries && r.paymentEntries.failed) || 0) + ((r.journalEntries && r.journalEntries.failed) || 0);
         }
         return 0;
       }

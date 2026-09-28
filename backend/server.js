@@ -66,7 +66,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Default: a sibling folder "<project>-data" next to your project root.
 // Override by setting DATA_DIR in your .env file.
 // Always write to AppData — works in Electron, PKG exe, and dev.
-const DATA_DIR_DEFAULT = path.join(os.homedir(), "AppData", "Roaming", "TallyERPNextIntegration", "data");
+const DATA_DIR_DEFAULT = path.join(os.homedir(), "AppData", "Roaming", "Tally ERPNext Integration", "data");
 const CONFIG_DIR = process.env.DATA_DIR || DATA_DIR_DEFAULT;
 const CONFIG_FILE = path.join(CONFIG_DIR, "auto_sync_config.json");
 const CREDS_FILE = path.join(CONFIG_DIR, "auto_sync_creds.json");  // gitignore this

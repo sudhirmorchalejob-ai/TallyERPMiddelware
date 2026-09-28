@@ -4,21 +4,21 @@ import { useState, useEffect } from "react";
 const BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
 
 const C = {
-  card:"#ffffff", surface:"#f0f3fa", bg:"#e8edf6", border:"#d8dff0",
-  ink:"#0a0e1a", muted:"#5a6482", dim:"#8a94b0",
-  accent:"#2563eb", accentD:"#1d4ed8", accentL:"#eef4ff", accentB:"#b8d0fe",
-  green:"#16a34a", greenD:"#15803d", greenL:"#f0fdf4", greenB:"#bbf7d0",
-  amber:"#d97706", amberL:"#fffbeb", amberB:"#fde68a",
-  red:"#dc2626", redL:"#fef2f2", redB:"#fecaca",
-  mono:"'JetBrains Mono','Fira Code',monospace",
-  sans:"'DM Sans','Plus Jakarta Sans',sans-serif",
-  title:"'Syne','Plus Jakarta Sans',sans-serif",
+  card: "#ffffff", surface: "#f0f3fa", bg: "#e8edf6", border: "#d8dff0",
+  ink: "#0a0e1a", muted: "#5a6482", dim: "#8a94b0",
+  accent: "#2563eb", accentD: "#1d4ed8", accentL: "#eef4ff", accentB: "#b8d0fe",
+  green: "#16a34a", greenD: "#15803d", greenL: "#f0fdf4", greenB: "#bbf7d0",
+  amber: "#d97706", amberL: "#fffbeb", amberB: "#fde68a",
+  red: "#dc2626", redL: "#fef2f2", redB: "#fecaca",
+  mono: "'JetBrains Mono','Fira Code',monospace",
+  sans: "'DM Sans','Plus Jakarta Sans',sans-serif",
+  title: "'Syne','Plus Jakarta Sans',sans-serif",
 };
 
 // ── Storage keys (must match SyncToErpNext exactly) ──────────────────────────
-const CREDS_KEY        = "erp_creds";         // per-company map  { companyName: {url,apiKey,apiSecret} }
+const CREDS_KEY = "erp_creds";         // per-company map  { companyName: {url,apiKey,apiSecret} }
 const GLOBAL_CREDS_KEY = "erp_global_creds";  // flat global creds (legacy / fallback)
-const COMPANY_MAP_KEY  = "erp_company_map";   // { tallyCompany: erpnextCompanyName }
+const COMPANY_MAP_KEY = "erp_company_map";   // { tallyCompany: erpnextCompanyName }
 
 function loadAllPerCompanyCreds() {
   try { return JSON.parse(localStorage.getItem(CREDS_KEY) || "{}"); } catch { return {}; }
@@ -59,39 +59,39 @@ const inp = (extra = {}) => ({
 });
 const onFocus = (e) => {
   e.target.style.borderColor = C.accent;
-  e.target.style.background  = C.card;
-  e.target.style.boxShadow   = `0 0 0 3px ${C.accentB}55`;
+  e.target.style.background = C.card;
+  e.target.style.boxShadow = `0 0 0 3px ${C.accentB}55`;
 };
 const onBlur = (e) => {
   e.target.style.borderColor = C.border;
-  e.target.style.background  = C.surface;
-  e.target.style.boxShadow   = "none";
+  e.target.style.background = C.surface;
+  e.target.style.boxShadow = "none";
 };
 
 function Spinner({ size = 14, color = C.accent }) {
   return (
     <span style={{
-      display:"inline-block", width:size, height:size, borderRadius:"50%",
-      border:`2px solid ${color}20`, borderTopColor:color,
-      animation:"sp-spin .7s linear infinite", flexShrink:0,
+      display: "inline-block", width: size, height: size, borderRadius: "50%",
+      border: `2px solid ${color}20`, borderTopColor: color,
+      animation: "sp-spin .7s linear infinite", flexShrink: 0,
     }} />
   );
 }
 
 // ── Per-company credential row ────────────────────────────────────────────────
 function CompanyCredRow({ companyName, erpMap, onSaved, refreshTrigger }) {
-  const allCreds  = loadAllPerCompanyCreds();
-  const saved     = allCreds[companyName] || {};
-  const hasCreds  = !!(saved.url && saved.apiKey && saved.apiSecret);
-  const erpSaved  = erpMap[companyName] || "";
+  const allCreds = loadAllPerCompanyCreds();
+  const saved = allCreds[companyName] || {};
+  const hasCreds = !!(saved.url && saved.apiKey && saved.apiSecret);
+  const erpSaved = erpMap[companyName] || "";
 
-  const [open,    setOpen]    = useState(!hasCreds);
-  const [url,     setUrl]     = useState(saved.url       || "");
-  const [key,     setKey]     = useState(saved.apiKey    || "");
-  const [secret,  setSecret]  = useState(saved.apiSecret || "");
-  const [erpCo,   setErpCo]   = useState(erpSaved);
+  const [open, setOpen] = useState(!hasCreds);
+  const [url, setUrl] = useState(saved.url || "");
+  const [key, setKey] = useState(saved.apiKey || "");
+  const [secret, setSecret] = useState(saved.apiSecret || "");
+  const [erpCo, setErpCo] = useState(erpSaved);
   const [savedOk, setSavedOk] = useState(false);
-  const [ping,    setPing]    = useState(null);
+  const [ping, setPing] = useState(null);
   const [pinging, setPinging] = useState(false);
 
   // re-init if companyName or refreshTrigger changes
@@ -101,8 +101,8 @@ function CompanyCredRow({ companyName, erpMap, onSaved, refreshTrigger }) {
     const currentKey = c.apiKey || key;
     const currentSecret = c.apiSecret || secret;
 
-    setUrl(prev => c.url || prev); 
-    setKey(prev => c.apiKey || prev); 
+    setUrl(prev => c.url || prev);
+    setKey(prev => c.apiKey || prev);
     setSecret(prev => c.apiSecret || prev);
     setErpCo(prev => loadCompanyMap()[companyName] || prev);
     setSavedOk(false);
@@ -144,20 +144,6 @@ function CompanyCredRow({ companyName, erpMap, onSaved, refreshTrigger }) {
     } finally {
       setPinging(false);
     }
-  }
-
-  function handleClear() {
-    setUrl("");
-    setKey("");
-    setSecret("");
-    setErpCo("");
-    setPing(null);
-    const all = loadAllPerCompanyCreds();
-    delete all[companyName];
-    localStorage.setItem(CREDS_KEY, JSON.stringify(all));
-    const map = loadCompanyMap();
-    delete map[companyName];
-    localStorage.setItem(COMPANY_MAP_KEY, JSON.stringify(map));
   }
 
   const canSave = !!(url && key && secret && erpCo);
@@ -209,7 +195,7 @@ function CompanyCredRow({ companyName, erpMap, onSaved, refreshTrigger }) {
 
           {/* URL */}
           <div>
-            <label style={{ display:"block", fontFamily:C.mono, fontSize:9, color:C.muted, textTransform:"uppercase", letterSpacing:"0.12em", marginBottom:5, fontWeight:700 }}>ERPNext URL</label>
+            <label style={{ display: "block", fontFamily: C.mono, fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 5, fontWeight: 700 }}>ERPNext URL</label>
             <input value={url} onChange={e => setUrl(e.target.value)} placeholder="https://yoursite.frappe.cloud"
               style={inp({ fontFamily: C.mono, fontSize: 12 })} onFocus={onFocus} onBlur={onBlur} />
           </div>
@@ -217,11 +203,11 @@ function CompanyCredRow({ companyName, erpMap, onSaved, refreshTrigger }) {
           {/* Key + Secret */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             {[
-              ["API Key",    key,    setKey,    "api_key",    "text"],
+              ["API Key", key, setKey, "api_key", "text"],
               ["API Secret", secret, setSecret, "api_secret", "password"],
             ].map(([lbl, val, setter, ph, type]) => (
               <div key={lbl}>
-                <label style={{ display:"block", fontFamily:C.mono, fontSize:9, color:C.muted, textTransform:"uppercase", letterSpacing:"0.12em", marginBottom:5, fontWeight:700 }}>{lbl}</label>
+                <label style={{ display: "block", fontFamily: C.mono, fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 5, fontWeight: 700 }}>{lbl}</label>
                 <input value={val} onChange={e => setter(e.target.value)} type={type} placeholder={ph}
                   style={inp({ fontFamily: C.mono, fontSize: 12 })} onFocus={onFocus} onBlur={onBlur} />
               </div>
@@ -230,7 +216,7 @@ function CompanyCredRow({ companyName, erpMap, onSaved, refreshTrigger }) {
 
           {/* ERPNext Company Name */}
           <div>
-            <label style={{ display:"block", fontFamily:C.mono, fontSize:9, color:C.muted, textTransform:"uppercase", letterSpacing:"0.12em", marginBottom:5, fontWeight:700 }}>
+            <label style={{ display: "block", fontFamily: C.mono, fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 5, fontWeight: 700 }}>
               ERPNext Company Name <span style={{ color: C.amber }}>— must match exactly</span>
             </label>
             <input value={erpCo} onChange={e => setErpCo(e.target.value)} placeholder="e.g. Test Company"
@@ -254,14 +240,6 @@ function CompanyCredRow({ companyName, erpMap, onSaved, refreshTrigger }) {
                 cursor: !canSave ? "not-allowed" : "pointer", transition: "background .2s",
               }}>
               {savedOk ? "✓ Saved!" : "Save Credentials"}
-            </button>
-            <button onClick={handleClear}
-              style={{
-                padding: "10px 16px", borderRadius: 9, background: C.redL, border: `1.5px solid ${C.redB}`,
-                color: C.red, fontFamily: C.mono, fontSize: 11, fontWeight: 600,
-                cursor: "pointer", transition: "all .15s", flexShrink: 0,
-              }}>
-              🗑 Clear
             </button>
             <button onClick={handlePing} disabled={pinging || !url || !key || !secret}
               style={{
@@ -362,8 +340,8 @@ export function SettingsPage({ companies = [], selectedCompany = "", refreshTrig
             <p style={{ fontFamily: C.mono, fontSize: 10, color: isLicenseActive ? C.muted : C.amber, margin: "3px 0 0" }}>
               {isLicenseActive
                 ? (resolvedCompany
-                    ? <>For Tally company: <strong>{resolvedCompany}</strong></>
-                    : "Saved locally per Tally company — never sent to any server")
+                  ? <>For Tally company: <strong>{resolvedCompany}</strong></>
+                  : "Saved locally per Tally company — never sent to any server")
                 : "⚠ Activate your license below to connect ERPNext"}
             </p>
           </div>
@@ -423,7 +401,7 @@ const FEATURES = [
 ];
 
 function LicenseSection() {
-  const [email, setEmail]         = useState("");
+  const [email, setEmail] = useState("");
   const [emailSubmitted, setEmailSubmitted] = useState(
     () => !!localStorage.getItem("license_email") && localStorage.getItem("license_status") === "active"
   );
@@ -436,11 +414,11 @@ function LicenseSection() {
     () => localStorage.getItem("license_key") || ""
   );
   const [activating, setActivating] = useState(false);
-  const [activated, setActivated]   = useState(
+  const [activated, setActivated] = useState(
     () => localStorage.getItem("license_status") === "active" && !!localStorage.getItem("license_email")
   );
-  const licPlan   = localStorage.getItem("license_plan")  || "Pro";
-  const licEnd    = localStorage.getItem("license_end")   || "";
+  const licPlan = localStorage.getItem("license_plan") || "Pro";
+  const licEnd = localStorage.getItem("license_end") || "";
   const [activateMsg, setActivateMsg] = useState("");
   const savedEmail = localStorage.getItem("license_email") || "";
 
@@ -459,22 +437,22 @@ function LicenseSection() {
     setEmailError("");
     setEmailResult(null);
     try {
-      const res  = await fetch(`${BASE_URL}/license/verify-email`, {
-        method : "POST",
+      const res = await fetch(`${BASE_URL}/license/verify-email`, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body   : JSON.stringify({ email: normalized }),
+        body: JSON.stringify({ email: normalized }),
       });
       const data = await res.json();
 
       // Only an explicit valid:true unlocks. HTTP 200 alone is never a pass —
       // the backend has already checked licence, product, status and expiry.
       if (data.valid === true) {
-        localStorage.setItem("license_email",  normalized);
-        localStorage.setItem("license_plan",   data.plan    || "Pro");
-        localStorage.setItem("license_end",    data.endDate || "");
+        localStorage.setItem("license_email", normalized);
+        localStorage.setItem("license_plan", data.plan || "Pro");
+        localStorage.setItem("license_end", data.endDate || "");
         localStorage.setItem("license_status", "active");
         setEmailResult({
-          state:  "available",
+          state: "available",
           detail: `${data.plan || "Licensed"}${data.productName ? ` · ${data.productName}` : ""}`,
         });
         setEmailSubmitted(true);
@@ -482,7 +460,7 @@ function LicenseSection() {
       } else if (data.verificationFailed) {
         // Could not check — this is NOT the same as "no licence".
         setEmailResult({
-          state:  "error",
+          state: "error",
           detail: data.reason || "Could not reach the license service.",
         });
         setEmailError(data.reason || "Could not verify right now. Please try again.");
@@ -576,7 +554,7 @@ function LicenseSection() {
           </div>
           <div style={{ textAlign: "right" }}>
             <p style={{ fontFamily: C.title, fontSize: 26, fontWeight: 800, color: "#fff", margin: 0, letterSpacing: "-1px" }}>
-             
+
             </p>
             {activated && (
               <span style={{
@@ -645,9 +623,9 @@ function LicenseSection() {
               display: "flex", alignItems: "flex-start", gap: 10,
               padding: "11px 13px", borderRadius: 9,
               background: emailResult.state === "available" ? C.greenL
-                         : emailResult.state === "error"   ? C.amberL : C.redL,
+                : emailResult.state === "error" ? C.amberL : C.redL,
               border: `1px solid ${emailResult.state === "available" ? C.greenB
-                                 : emailResult.state === "error"   ? C.amberB : "#fecaca"}`,
+                : emailResult.state === "error" ? C.amberB : "#fecaca"}`,
             }}>
               <span style={{ fontSize: 15, lineHeight: 1.2 }}>
                 {emailResult.state === "available" ? "✅" : emailResult.state === "error" ? "⚠️" : "❌"}
@@ -656,11 +634,11 @@ function LicenseSection() {
                 <p style={{
                   fontFamily: C.title, fontSize: 12, fontWeight: 800, margin: 0,
                   color: emailResult.state === "available" ? C.green
-                       : emailResult.state === "error"   ? C.amber : C.red,
+                    : emailResult.state === "error" ? C.amber : C.red,
                 }}>
                   {emailResult.state === "available" ? "License Available"
-                   : emailResult.state === "error"   ? "Could Not Verify"
-                   : "No License"}
+                    : emailResult.state === "error" ? "Could Not Verify"
+                      : "No License"}
                 </p>
                 <p style={{ fontFamily: C.mono, fontSize: 10, color: C.muted, margin: "3px 0 0", lineHeight: 1.6 }}>
                   {emailResult.state === "available"
