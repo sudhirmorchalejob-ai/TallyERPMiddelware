@@ -298,9 +298,12 @@ export function DashboardPage({ currentCompany, refreshTrigger }) {
   const totalR    = history.length;
   const successPct = totalR > 0 ? `${Math.round((successR/totalR)*100)}%` : "100%";
 
-  const syncColor = isUD ? "#0d9488" : lastSync?.status === "failed" ? "#dc2626" : "#16a34a";
-  const syncBg    = isUD ? "#f0fdfa" : lastSync?.status === "failed" ? "#fef2f2" : "#f0fdf4";
-  const syncLabel = isUD ? "Up to date" : lastSync?.status === "failed" ? "Failed" : "Success";
+  const isErr  = lastSync?.status === "failed";
+  const isWarn = !isErr && tFailed > 0;
+
+  const syncColor = isUD ? "#0d9488" : isErr ? "#dc2626" : isWarn ? "#d97706" : "#16a34a";
+  const syncBg    = isUD ? "#f0fdfa" : isErr ? "#fef2f2" : isWarn ? "#fffbeb" : "#f0fdf4";
+  const syncLabel = isUD ? "Up to date" : isErr ? "Failed" : isWarn ? "Warnings" : "Success";
 
   if (loading) return (
     <>
