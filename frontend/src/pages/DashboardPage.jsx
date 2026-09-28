@@ -657,10 +657,10 @@ export function DashboardPage({ currentCompany, refreshTrigger }) {
                   background: syncColor + "18",
                   display:"flex", alignItems:"center", justifyContent:"center",
                   fontSize:18, color:syncColor,
-                }}>{isUD ? "✓" : lastSync.status==="failed" ? "✗" : "✓"}</div>
+                }}>{isUD ? "✓" : isErr ? "✗" : isWarn ? "!" : "✓"}</div>
                 <div style={{ flex:1 }}>
                   <p style={{ fontFamily:"'Manrope',sans-serif", fontSize:13, fontWeight:700, color:"#0f172a" }}>
-                    {isUD ? "Already up to date" : lastSync.status==="failed" ? "Last sync failed" : "Last sync successful"}
+                    {isUD ? "Already up to date" : isErr ? "Last sync failed" : isWarn ? "Last sync finished with errors" : "Last sync successful"}
                   </p>
                   {lastAt && <p style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:10, color:"#64748b", marginTop:2 }}>{timeAgo(lastAt)} · {new Date(lastAt).toLocaleString("en-IN")}</p>}
                 </div>

@@ -146,6 +146,20 @@ function CompanyCredRow({ companyName, erpMap, onSaved, refreshTrigger }) {
     }
   }
 
+  function handleClear() {
+    setUrl("");
+    setKey("");
+    setSecret("");
+    setErpCo("");
+    setPing(null);
+    const all = loadAllPerCompanyCreds();
+    delete all[companyName];
+    localStorage.setItem(CREDS_KEY, JSON.stringify(all));
+    const map = loadCompanyMap();
+    delete map[companyName];
+    localStorage.setItem(COMPANY_MAP_KEY, JSON.stringify(map));
+  }
+
   const canSave = !!(url && key && secret && erpCo);
 
   return (
@@ -240,6 +254,14 @@ function CompanyCredRow({ companyName, erpMap, onSaved, refreshTrigger }) {
                 cursor: !canSave ? "not-allowed" : "pointer", transition: "background .2s",
               }}>
               {savedOk ? "✓ Saved!" : "Save Credentials"}
+            </button>
+            <button onClick={handleClear}
+              style={{
+                padding: "10px 16px", borderRadius: 9, background: C.redL, border: `1.5px solid ${C.redB}`,
+                color: C.red, fontFamily: C.mono, fontSize: 11, fontWeight: 600,
+                cursor: "pointer", transition: "all .15s", flexShrink: 0,
+              }}>
+              🗑 Clear
             </button>
             <button onClick={handlePing} disabled={pinging || !url || !key || !secret}
               style={{
