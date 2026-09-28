@@ -56,16 +56,6 @@
       "electron.cjs",
       "assets/**/*"
     ],
-    "extraResources": [
-      {
-        "from": "dist/tally-middleware-backend.exe",
-        "to": "backend/tally-middleware-backend.exe"
-      },
-      {
-        "from": "dist/frontend-build",
-        "to": "backend/frontend-build"
-      }
-    ],
     "win": {
       "target": "nsis",
       "icon": "assets/icon.png"

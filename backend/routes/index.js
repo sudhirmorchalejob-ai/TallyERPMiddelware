@@ -55,6 +55,7 @@ import {
   getIncrementalVoucherDates,
   filterChangedMasters,
   buildAlterIdMap,
+  saveSyncHistoryRecord,
 } from "../syncState.js";
 import { logger } from "../logs/logger.js";
 import { config } from "../config/config.js";
@@ -111,11 +112,13 @@ function finishJob(id, result) {
         startedAt:   job.startedAt,
         finishedAt:  new Date().toISOString(),
         triggeredBy: "manual",
+        company:     job.companyName || result.company || "",
       };
       globalThis._lastManualSyncResult = syncResult;
       // Save by company for multi-tenant dashboard
       globalThis._lastSyncByCompany = globalThis._lastSyncByCompany || {};
       globalThis._lastSyncByCompany[job.companyName || ""] = syncResult;
+      saveSyncHistoryRecord(syncResult);
     }
   }
 }

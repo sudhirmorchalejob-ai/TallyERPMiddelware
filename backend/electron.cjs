@@ -9,11 +9,12 @@ let backendProcess;
 const PORT = 5000;
 
 // ── Resolve backend EXE path ──────────────────────────────────────────────────
-// In production (installed): resources/backend/tally-middleware-backend.exe
+// In production (installed): sibling backend/ directory next to the exe
 // In dev: ../dist/tally-middleware-backend.exe
 function getBackendPath() {
   if (app.isPackaged) {
-    return path.join(process.resourcesPath, "backend", "tally-middleware-backend.exe");
+    // When installed, the backend folder sits next to the Electron exe
+    return path.join(path.dirname(app.getPath("exe")), "backend", "tally-middleware-backend.exe");
   }
   return path.join(__dirname, "dist", "tally-middleware-backend.exe");
 }

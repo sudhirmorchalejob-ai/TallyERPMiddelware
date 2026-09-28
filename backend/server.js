@@ -23,6 +23,8 @@ import {
   filterChangedMasters,
   buildAlterIdMap,
   resetCompanyState,
+  loadSyncHistory,
+  saveSyncHistoryRecord,
 } from "./syncState.js";
 import {
   isFullSyncComplete,
@@ -441,6 +443,8 @@ async function runAutoSync(triggeredBy = "interval") {
       finishedAt: new Date().toISOString(),
     };
 
+    saveSyncHistoryRecord(_lastAutoSync);
+
     logger.human.syncDone(
       companyName,
       state.lastVoucherSyncDate || fallbackFromDate,
@@ -464,7 +468,9 @@ async function runAutoSync(triggeredBy = "interval") {
       fromDate: state.lastVoucherSyncDate || fallbackFromDate,
       toDate,
       triggeredBy,
+      finishedAt: new Date().toISOString(),
     };
+    saveSyncHistoryRecord(_lastAutoSync);
     logger.human.syncFailed(companyName, err.message);
   } finally {
     _syncRunning = false;
@@ -611,6 +617,8 @@ app.post("/api/auto-sync/configure", (req, res) => {
  */
 app.get("/api/auto-sync/status", (req, res) => {
   const requestedCompany = req.query.company || _autoSyncConfig.companyName;
+  const history = loadSyncHistory(requestedCompany);
+
   // Check completed jobs for this company
   let lastManual = null;
   try {
@@ -627,11 +635,14 @@ app.get("/api/auto-sync/status", (req, res) => {
     || (globalThis._lastSyncByCompany?.[requestedCompany])
     || _lastAutoSync
     || lastManual
+    || history[0]
     || null;
+
   res.json({
     config: _safeConfig(),
     running: _syncRunning,
     lastSync,
+    history,
     nextRunIn: _autoSyncConfig.enabled && _autoSyncTimer
       ? `up to ${_autoSyncConfig.intervalLabel}`
       : "not scheduled",

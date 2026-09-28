@@ -24,9 +24,15 @@ const PAGE_META = {
 };
 
 export default function DashboardWrapper({ companies, onRefresh, selectedCompany, onCompanyChange }) {
-  const [activeTab, setActiveTab] = useState("settings");
+  const [activeTab, setActiveTab] = useState("dashboard");
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  const meta = PAGE_META[activeTab] || PAGE_META["check"];
+  const meta = PAGE_META[activeTab] || PAGE_META["dashboard"];
+
+  const handleHeaderRefresh = () => {
+    if (onRefresh) onRefresh();
+    setRefreshKey(k => k + 1);
+  };
 
   return (
     <div style={{
@@ -239,8 +245,8 @@ export default function DashboardWrapper({ companies, onRefresh, selectedCompany
 
            {/* ── Refresh Button ── */}
   <button
-  onClick={onRefresh}
-  title="Refresh Tally companies"
+  onClick={handleHeaderRefresh}
+  title="Refresh data & Tally companies"
   style={{
     display: "flex", alignItems: "center", gap: 6,
     marginLeft: "auto",
@@ -265,13 +271,13 @@ export default function DashboardWrapper({ companies, onRefresh, selectedCompany
         {/* Content */}
         <main style={{ flex: 1, overflowY: "auto", padding: "28px 32px" }}>
           <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-            {activeTab === "dashboard" && <DashboardPage currentCompany={selectedCompany} />}
-            {activeTab === "check" && <MiddlewareCheck companies={companies} />}
+            {activeTab === "dashboard" && <DashboardPage currentCompany={selectedCompany} refreshTrigger={refreshKey} />}
+            {activeTab === "check" && <MiddlewareCheck companies={companies} refreshTrigger={refreshKey} />}
 <div style={{display:activeTab==="sync"?"block":"none"}}>
-  <SyncToErpNext companies={companies} onCompanyChange={onCompanyChange} />
+  <SyncToErpNext companies={companies} onCompanyChange={onCompanyChange} refreshTrigger={refreshKey} />
 </div>
-{activeTab === "logs" && <LiveLogs currentCompany={selectedCompany} />}
-{activeTab === "settings" && <SettingsPage companies={companies} selectedCompany={selectedCompany} />}
+{activeTab === "logs" && <LiveLogs currentCompany={selectedCompany} refreshTrigger={refreshKey} />}
+{activeTab === "settings" && <SettingsPage companies={companies} selectedCompany={selectedCompany} refreshTrigger={refreshKey} />}
           </div>
         </main>
       </div>

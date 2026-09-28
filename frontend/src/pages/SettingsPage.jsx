@@ -32,17 +32,12 @@ function loadCompanyMap() {
 
 /**
  * Save credentials for a specific Tally company.
- * Also keeps erp_global_creds in sync so the fallback in SyncToErpNext still works.
  */
 function saveCredsForCompany(companyName, creds) {
   // 1. per-company map
   const all = loadAllPerCompanyCreds();
   all[companyName] = creds;
   localStorage.setItem(CREDS_KEY, JSON.stringify(all));
-
-  // 2. global fallback (url/key/secret only — no company name here)
-  const global = { url: creds.url, apiKey: creds.apiKey, apiSecret: creds.apiSecret };
-  localStorage.setItem(GLOBAL_CREDS_KEY, JSON.stringify(global));
 }
 
 /**
@@ -84,7 +79,7 @@ function Spinner({ size = 14, color = C.accent }) {
 }
 
 // ── Per-company credential row ────────────────────────────────────────────────
-function CompanyCredRow({ companyName, erpMap, onSaved }) {
+function CompanyCredRow({ companyName, erpMap, onSaved, refreshTrigger }) {
   const allCreds  = loadAllPerCompanyCreds();
   const saved     = allCreds[companyName] || {};
   const hasCreds  = !!(saved.url && saved.apiKey && saved.apiSecret);
@@ -99,13 +94,32 @@ function CompanyCredRow({ companyName, erpMap, onSaved }) {
   const [ping,    setPing]    = useState(null);
   const [pinging, setPinging] = useState(false);
 
-  // re-init if companyName changes
+  // re-init if companyName or refreshTrigger changes
   useEffect(() => {
     const c = loadAllPerCompanyCreds()[companyName] || {};
-    setUrl(c.url || ""); setKey(c.apiKey || ""); setSecret(c.apiSecret || "");
-    setErpCo(loadCompanyMap()[companyName] || "");
-    setSavedOk(false); setPing(null);
-  }, [companyName]);
+    const currentUrl = c.url || url;
+    const currentKey = c.apiKey || key;
+    const currentSecret = c.apiSecret || secret;
+
+    setUrl(prev => c.url || prev); 
+    setKey(prev => c.apiKey || prev); 
+    setSecret(prev => c.apiSecret || prev);
+    setErpCo(prev => loadCompanyMap()[companyName] || prev);
+    setSavedOk(false);
+
+    if (currentUrl && currentKey && currentSecret) {
+      setPinging(true);
+      fetch(`${BASE_URL}/erpnext/ping`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ erpnextUrl: currentUrl.trim(), erpnextApiKey: currentKey.trim(), erpnextApiSecret: currentSecret.trim() }),
+      })
+        .then(r => r.json())
+        .then(data => setPing(data))
+        .catch(e => setPing({ connected: false, error: e.message }))
+        .finally(() => setPinging(false));
+    }
+  }, [companyName, refreshTrigger]);
 
   function handleSave() {
     const creds = { url: url.trim(), apiKey: key.trim(), apiSecret: secret.trim() };
@@ -260,12 +274,13 @@ function CompanyCredRow({ companyName, erpMap, onSaved }) {
 }
 
 // ── Main Settings page ────────────────────────────────────────────────────────
-export function SettingsPage({ companies = [], selectedCompany = "" }) {
+export function SettingsPage({ companies = [], selectedCompany = "", refreshTrigger }) {
   const [erpMap, setErpMap] = useState(loadCompanyMap);
   const [licenseActive, setLicenseActive] = useState(false);
 
-  // Re-check license status whenever component renders or localStorage changes
+  // Re-check license status whenever component renders or localStorage / refreshTrigger changes
   useEffect(() => {
+    setErpMap(loadCompanyMap());
     function checkLicense() {
       const hasExistingCreds = (() => {
         try {
@@ -282,7 +297,7 @@ export function SettingsPage({ companies = [], selectedCompany = "" }) {
     // Poll every second so it updates immediately after LicenseSection saves
     const t = setInterval(checkLicense, 1000);
     return () => clearInterval(t);
-  }, []);
+  }, [refreshTrigger]);
 
   const isLicenseActive = licenseActive;
 
@@ -360,6 +375,7 @@ export function SettingsPage({ companies = [], selectedCompany = "" }) {
             companyName={resolvedCompany}
             erpMap={erpMap}
             onSaved={handleSaved}
+            refreshTrigger={refreshTrigger}
           />
         )}
       </div>

@@ -146,7 +146,7 @@ function StatBadge({ label, value, color = C.accent, bg = C.accentL, bd = C.acce
 }
 
 // ── Main component ───────────────────────────────────────────────────────────
-export function MiddlewareCheck({ companies }) {
+export function MiddlewareCheck({ companies, refreshTrigger }) {
   // ── State (unchanged) ──────────────────────────────────────────────────────
   const [company,     setCompany]     = useState(companies?.[0]?.name || "");
   const [fromDate,    setFromDate]    = useState(YEAR_START);
@@ -168,6 +168,15 @@ export function MiddlewareCheck({ companies }) {
   useEffect(() => {
     if (companies?.length > 0 && !company) setCompany(companies[0].name);
   }, [companies]); // eslint-disable-line
+
+  useEffect(() => {
+    if (refreshTrigger) {
+      setReport(null);
+      setRawResponse(null);
+      setError(null);
+      setShowRaw(false);
+    }
+  }, [refreshTrigger]);
 
   // ── runCheck (unchanged) ───────────────────────────────────────────────────
   async function runCheck() {

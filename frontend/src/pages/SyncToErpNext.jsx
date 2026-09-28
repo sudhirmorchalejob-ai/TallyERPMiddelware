@@ -385,7 +385,7 @@ function SyncCheckboxGrid({ opts, onToggle, onIndividualSync, busy, co, loadingI
   );
 }
 
-export function SyncToErpNext({ companies, onCompanyChange }) {
+export function SyncToErpNext({ companies, onCompanyChange, refreshTrigger }) {
   const [company, setCompany] = useState(() => { const last = localStorage.getItem("last_tally_company"); const found = companies?.find(c => c.name === last); return found ? found.name : (companies?.[0]?.name || ""); });
 
   // Notify App.js when the company changes
@@ -396,6 +396,13 @@ export function SyncToErpNext({ companies, onCompanyChange }) {
     }
   }, [company, onCompanyChange]);
 
+  useEffect(() => {
+    if (refreshTrigger) {
+      setResult(null);
+      setErpPing(null);
+    }
+  }, [refreshTrigger]);
+
   const [fromDate, setFromDate] = useState(() => localStorage.getItem("sync_from_date") || YEAR_START);
   const [toDate, setToDate] = useState(() => localStorage.getItem("sync_to_date") || TODAY);
   const [erpPing, setErpPing] = useState(null);
@@ -403,8 +410,7 @@ export function SyncToErpNext({ companies, onCompanyChange }) {
   const [erpCompany, setErpCompany] = useState(() => {
     const initCo = localStorage.getItem("last_tally_company") || companies?.[0]?.name || "";
     const allMappings = JSON.parse(localStorage.getItem("erp_company_map") || "{}");
-    const globalCreds = (() => { try { return JSON.parse(localStorage.getItem("erp_global_creds") || "{}"); } catch { return {}; } })();
-    return allMappings[initCo] || globalCreds.erpnextCompany || "";
+    return allMappings[initCo] || "";
   });
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(null);
@@ -452,18 +458,15 @@ export function SyncToErpNext({ companies, onCompanyChange }) {
 
   useEffect(() => {
     function loadCreds() {
-      const globalCreds = (() => {
-        try { return JSON.parse(localStorage.getItem("erp_global_creds") || "{}"); } catch { return {}; }
-      })();
       const perCompany = company ? (loadAllCreds()[company] || {}) : {};
       const resolved = (perCompany.url && perCompany.apiKey && perCompany.apiSecret)
         ? perCompany
-        : globalCreds;
+        : {};
       setCompanyCreds(resolved);
 
       const allMappings = JSON.parse(localStorage.getItem("erp_company_map") || "{}");
       const mapped = company ? (allMappings[company] || "") : "";
-      setErpCompany(mapped || globalCreds.erpnextCompany || "");
+      setErpCompany(mapped || "");
     }
 
     loadCreds();

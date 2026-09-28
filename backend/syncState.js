@@ -206,3 +206,39 @@ export function buildAlterIdMap(items, keyField = "name") {
   }
   return map;
 }
+
+const HISTORY_FILE = path.join(STATE_DIR, "sync_history.json");
+
+export function loadSyncHistory(company = null) {
+  try {
+    ensureDir();
+    if (!fs.existsSync(HISTORY_FILE)) return [];
+    const raw = fs.readFileSync(HISTORY_FILE, "utf8");
+    const arr = JSON.parse(raw) || [];
+    if (!company) return arr;
+    const norm = String(company).trim().toLowerCase();
+    return arr.filter(h => !h.company || String(h.company).trim().toLowerCase() === norm || String(h.tallyCompany || "").trim().toLowerCase() === norm);
+  } catch {
+    return [];
+  }
+}
+
+export function saveSyncHistoryRecord(record) {
+  try {
+    ensureDir();
+    if (!record || typeof record !== "object") return;
+    const current = loadSyncHistory();
+    const key = record.finishedAt || record.startedAt;
+    if (!key) return;
+    const exists = current.some(e => (e.finishedAt && e.finishedAt === key) || (e.startedAt && e.startedAt === key));
+    if (!exists) {
+      const updated = [record, ...current].slice(0, 100);
+      const tmp = HISTORY_FILE + ".tmp";
+      fs.writeFileSync(tmp, JSON.stringify(updated, null, 2), "utf8");
+      fs.renameSync(tmp, HISTORY_FILE);
+      logger.info(`syncState: saved sync history entry for "${record.company || "default"}"`);
+    }
+  } catch (err) {
+    logger.warn("syncState: failed to save history record: " + err.message);
+  }
+}

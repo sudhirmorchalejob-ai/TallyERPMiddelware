@@ -7,8 +7,7 @@ function getErpUrlForCompany(c) {
   try {
     const m = JSON.parse(localStorage.getItem("erp_creds") || "{}");
     if (m[c]?.url) return m[c].url.replace(/\/$/, "");
-    const g = JSON.parse(localStorage.getItem("erp_global_creds") || "{}");
-    return (g.url || "").replace(/\/$/, "");
+    return "";
   } catch { return ""; }
 }
 function getErpCompanyName(c) {
@@ -130,8 +129,51 @@ function NoCreds({ company }) {
   );
 }
 
+function sum(step, f) {
+  if (!step) return 0;
+  let t = 0;
+  ["customers","suppliers","accounts","sales","purchase","journalEntries","paymentEntries"]
+    .forEach(k => { if (step[k]) t += step[k][f] || 0; });
+  if (typeof step[f] === "number") t += step[f];
+  return t;
+}
+
+function parseRawHistoryRecord(e) {
+  if (!e) return null;
+  if (typeof e.created === "number" && typeof e.updated === "number") {
+    return {
+      ...e,
+      at: e.at ? new Date(e.at) : (e.finishedAt ? new Date(e.finishedAt) : new Date(e.startedAt || Date.now()))
+    };
+  }
+  const s = e.steps || {};
+  const allSteps = [s.chartOfAccounts, s.ledgers, s.smartLedgers, s.openingBalances, s.godowns, s.costCentres, s.stockItems, s.vouchers, s.invoices].filter(Boolean);
+  const tCreated = allSteps.reduce((a, x) => a + sum(x, "created"), 0);
+  const tUpdated = allSteps.reduce((a, x) => a + sum(x, "updated"), 0);
+  const tFailed  = allSteps.reduce((a, x) => a + sum(x, "failed"), 0);
+  const tSkipped = allSteps.reduce((a, x) => a + sum(x, "skipped"), 0);
+
+  const isUD = e.status === "uptodate";
+  
+  return {
+    at: e.at ? new Date(e.at) : (e.finishedAt ? new Date(e.finishedAt) : new Date(e.startedAt || Date.now())),
+    finishedAt: e.finishedAt,
+    status: isUD ? "uptodate" : e.status || "ok",
+    from: e.fromDate,
+    to: e.toDate,
+    upToDate: isUD,
+    error: e.status === "failed" ? e.error : null,
+    erpUrl: e.erpUrl || "",
+    created: tCreated,
+    updated: tUpdated,
+    failed: tFailed,
+    skipped: tSkipped,
+    trigger: e.triggeredBy || e.trigger || "auto"
+  };
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────
-export function DashboardPage({ currentCompany }) {
+export function DashboardPage({ currentCompany, refreshTrigger }) {
   const [autoStatus, setAutoStatus] = useState(null);
   const [loading, setLoading]       = useState(true);
   const [now, setNow]               = useState(new Date());
@@ -147,50 +189,76 @@ export function DashboardPage({ currentCompany }) {
   useEffect(() => {
     setAutoStatus(null); setLoading(true);
     setHistory(loadHist(getErpUrlForCompany(currentCompany)));
-  }, [currentCompany]);
+  }, [currentCompany, refreshTrigger]);
 
   useEffect(() => {
-    if (!hasCreds) { setLoading(false); return; }
+    let isMounted = true;
     const load = async () => {
       try {
         const q = currentCompany ? `?company=${encodeURIComponent(currentCompany)}` : "";
-        const data = await fetch(`${BASE_URL}/auto-sync/status${q}`).then(r => r.json());
-        setAutoStatus(data);
-      } catch {}
-      finally { setLoading(false); }
+        const res = await fetch(`${BASE_URL}/auto-sync/status${q}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (isMounted) {
+          setAutoStatus(data);
+          
+          let remoteHist = [];
+          if (Array.isArray(data.history) && data.history.length > 0) {
+            remoteHist = data.history.map(parseRawHistoryRecord).filter(Boolean);
+          }
+          const local = loadHist(getErpUrlForCompany(currentCompany)).map(parseRawHistoryRecord).filter(Boolean);
+          
+          const seen = new Set();
+          const combined = [...local, ...remoteHist].filter(h => {
+            const key = h.finishedAt || h.at.getTime();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          }).sort((a, b) => b.at - a.at).slice(0, 50);
+          
+          setHistory(combined);
+        }
+      } catch (err) {
+        console.error("Dashboard error fetching status:", err);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
     };
     load();
     const t = setInterval(load, 5000);
-    return () => clearInterval(t);
-  }, [currentCompany, hasCreds]);
+    return () => { isMounted = false; clearInterval(t); };
+  }, [currentCompany, hasCreds, refreshTrigger]);
 
-  const lastSync  = autoStatus?.lastSync;
   const cfg       = autoStatus?.config || {};
   const isRunning = !!autoStatus?.running;
-  const steps     = lastSync?.steps || {};
 
-  function sum(step, f) {
-    if (!step) return 0;
-    let t = 0;
-    ["customers","suppliers","accounts","sales","purchase","journalEntries","paymentEntries"]
-      .forEach(k => { if (step[k]) t += step[k][f] || 0; });
-    if (typeof step[f] === "number") t += step[f];
-    return t;
+  // Use the most recent entry from local history for Insights
+  const latestHistRun = history[0];
+  const lastSync  = latestHistRun?.result || autoStatus?.lastSync || latestHistRun;
+  
+  let tCreated = 0, tUpdated = 0, tFailed = 0, tSkipped = 0;
+  if (lastSync) {
+    if (typeof lastSync.created === "number") {
+      tCreated = lastSync.created;
+      tUpdated = lastSync.updated;
+      tFailed = lastSync.failed;
+      tSkipped = lastSync.skipped;
+    } else {
+      const steps = lastSync.steps || {};
+      const allSteps = [steps.chartOfAccounts, steps.ledgers, steps.smartLedgers, steps.openingBalances, steps.godowns, steps.costCentres, steps.stockItems, steps.vouchers, steps.invoices].filter(Boolean);
+      tCreated = allSteps.reduce((a,s) => a + sum(s,"created"), 0);
+      tUpdated = allSteps.reduce((a,s) => a + sum(s,"updated"), 0);
+      tFailed  = allSteps.reduce((a,s) => a + sum(s,"failed"),  0);
+      tSkipped = allSteps.reduce((a,s) => a + sum(s,"skipped"), 0);
+    }
   }
 
-  const allSteps = [steps.chartOfAccounts, steps.ledgers, steps.smartLedgers, steps.openingBalances, steps.godowns, steps.costCentres, steps.stockItems, steps.vouchers, steps.invoices].filter(Boolean);
-  const tCreated = allSteps.reduce((a,s) => a + sum(s,"created"), 0);
-  const tUpdated = allSteps.reduce((a,s) => a + sum(s,"updated"), 0);
-  const tFailed  = allSteps.reduce((a,s) => a + sum(s,"failed"),  0);
-  const tSkipped = allSteps.reduce((a,s) => a + sum(s,"skipped"), 0);
-
-  const lastAt   = lastSync?.finishedAt || lastSync?.startedAt;
-  const isUD     = lastSync?.status === "uptodate";
+  const lastAt   = lastSync?.finishedAt || lastSync?.startedAt || lastSync?.at;
+  const isUD     = lastSync?.status === "uptodate" || lastSync?.upToDate;
   const nextRun  = autoStatus?.nextRunAt ? new Date(autoStatus.nextRunAt) : null;
   const remMs    = nextRun ? Math.max(0, nextRun - now) : 0;
-
-  // Use finishedAt as the unique key — captures BOTH auto-sync and manual sync runs
-  const dedupKey = lastSync?.finishedAt || lastSync?.startedAt;
+  
+  const dedupKey = lastSync?.finishedAt || lastSync?.startedAt || lastSync?.at?.getTime();
   useEffect(() => {
     if (!dedupKey || !erpUrl) return;
     if (autoStatus?.running) return; // skip in-progress runs
@@ -228,6 +296,7 @@ export function DashboardPage({ currentCompany }) {
   const autoRuns  = history.filter(h => h.trigger === "auto" || !h.trigger).length;
   const manualRuns = history.filter(h => h.trigger === "manual").length;
   const totalR    = history.length;
+  const successPct = totalR > 0 ? `${Math.round((successR/totalR)*100)}%` : "100%";
 
   const syncColor = isUD ? "#0d9488" : lastSync?.status === "failed" ? "#dc2626" : "#16a34a";
   const syncBg    = isUD ? "#f0fdfa" : lastSync?.status === "failed" ? "#fef2f2" : "#f0fdf4";
@@ -319,29 +388,27 @@ export function DashboardPage({ currentCompany }) {
               </div>
             </div>
 
-            {/* CENTER — Stats strip (shrinks if needed) */}
-            {totalR > 0 && (
-              <div style={{ display:"flex", justifyContent:"center" }}>
-                <div style={{ display:"flex", gap:0, background:"rgba(255,255,255,.06)", borderRadius:12, border:"1px solid rgba(255,255,255,.09)", overflow:"hidden" }}>
-                  {[
-                    { label:"Runs",      value: totalR },
-                    { label:"Auto",      value: autoRuns },
-                    { label:"Manual",    value: manualRuns },
-                    { label:"Success",   value: `${Math.round((successR/totalR)*100)}%` },
-                    { label:"Created",   value: fmt(lifetimeC) },
-                    { label:"Updated",   value: fmt(lifetimeU) },
-                  ].map(({ label, value }, i, arr) => (
-                    <div key={label} style={{
-                      padding:"12px 16px", textAlign:"center",
-                      borderRight: i < arr.length-1 ? "1px solid rgba(255,255,255,.09)" : "none",
-                    }}>
-                      <p style={{ fontFamily:"'Manrope',sans-serif", fontSize:16, fontWeight:800, color:"#fff", margin:0, lineHeight:1 }}>{value}</p>
-                      <p style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:8, color:"rgba(255,255,255,.4)", margin:"4px 0 0", textTransform:"uppercase", letterSpacing:"0.1em" }}>{label}</p>
-                    </div>
-                  ))}
-                </div>
+            {/* CENTER — Stats / Insights strip — ALWAYS DISPLAYING */}
+            <div style={{ display:"flex", justifyContent:"center" }}>
+              <div style={{ display:"flex", gap:0, background:"rgba(255,255,255,.06)", borderRadius:12, border:"1px solid rgba(255,255,255,.09)", overflow:"hidden" }}>
+                {[
+                  { label:"Runs",      value: totalR },
+                  { label:"Auto",      value: autoRuns },
+                  { label:"Manual",    value: manualRuns },
+                  { label:"Success",   value: successPct },
+                  { label:"Created",   value: fmt(lifetimeC) },
+                  { label:"Updated",   value: fmt(lifetimeU) },
+                ].map(({ label, value }, i, arr) => (
+                  <div key={label} style={{
+                    padding:"12px 16px", textAlign:"center",
+                    borderRight: i < arr.length-1 ? "1px solid rgba(255,255,255,.09)" : "none",
+                  }}>
+                    <p style={{ fontFamily:"'Manrope',sans-serif", fontSize:16, fontWeight:800, color:"#fff", margin:0, lineHeight:1 }}>{value}</p>
+                    <p style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:8, color:"rgba(255,255,255,.4)", margin:"4px 0 0", textTransform:"uppercase", letterSpacing:"0.1em" }}>{label}</p>
+                  </div>
+                ))}
               </div>
-            )}
+            </div>
 
             {/* RIGHT — Clock, always on same row */}
             <div style={{ textAlign:"right", flexShrink:0 }}>

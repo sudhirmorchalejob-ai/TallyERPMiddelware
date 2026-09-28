@@ -55,7 +55,7 @@ function useCounts(logs) {
   return logs.reduce((acc, l) => { acc[l.level] = (acc[l.level] || 0) + 1; return acc; }, {});
 }
 
-export function LiveLogs({ currentCompany = null }) {
+export function LiveLogs({ currentCompany = null, refreshTrigger }) {
   const [fromDate,    setFromDate]    = useState(TODAY);
   const [toDate,      setToDate]      = useState(TODAY);
   const [levelFilter, setLevelFilter] = useState("");
@@ -137,7 +137,8 @@ setLoading(false)
 currentCompany,
 fromDate,
 toDate,
-levelFilter
+levelFilter,
+refreshTrigger
 ]);
       
   useEffect(() => {

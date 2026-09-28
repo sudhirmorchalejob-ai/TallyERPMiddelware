@@ -18,6 +18,14 @@ function App() {
         clearInterval(retryRef.current);
         retryRef.current = null;
         setCompanies(list);
+        setCurrentCompany(prev => {
+          if (prev) return prev;
+          const last = localStorage.getItem("last_tally_company");
+          const match = list.find(c => c.name === last);
+          const chosen = match ? match.name : list[0]?.name || "";
+          if (chosen) localStorage.setItem("last_tally_company", chosen);
+          return chosen;
+        });
       }
     } catch (err) {
       console.log("Tally not reachable, will retry...");
