@@ -44,8 +44,11 @@ const ACTIVE_LICENSE_PATH_CANDIDATES = (() => {
 let _resolvedLicensePath = null;   // set once a path is known to work
 
 function productIdQuery() {
-  const productId = String(process.env.LMS_PRODUCT_ID || '').trim();
-  return productId ? `?productId=${encodeURIComponent(productId)}` : '';
+  // Must use the PRODUCT_ID constant, not process.env directly: the packaged
+  // EXE ships without a .env, so process.env.LMS_PRODUCT_ID is empty there and
+  // the request would go out with no ?productId=, which Licentic answers with
+  // "License not found for this product" for every customer.
+  return PRODUCT_ID ? `?productId=${encodeURIComponent(PRODUCT_ID)}` : '';
 }
 
 const HEARTBEAT_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
