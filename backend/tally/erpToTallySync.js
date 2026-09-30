@@ -431,9 +431,18 @@ export async function runErpToTallySync(creds = {}, options = {}) {
 
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
+import os from "os";
 
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;   // 5 minutes
-const STATE_FILE          = join(process.cwd(), "erpToTallyScheduler.json");
+// Not process.cwd(): the packaged EXE inherits whatever directory it was
+// launched from, so on a machine that installs to C:\Program Files this write
+// fails and the scheduler forgets its last run on every restart. Use the same
+// AppData folder as the rest of the app.
+const STATE_FILE          = join(
+  process.env.DATA_DIR
+    || join(os.homedir(), "AppData", "Roaming", "TallyERPNextIntegration", "data"),
+  "erpToTallyScheduler.json"
+);
 
 // ── Scheduler state ────────────────────────────────────────────────────────
 let _timer           = null;

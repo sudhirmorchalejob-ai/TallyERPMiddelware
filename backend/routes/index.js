@@ -81,6 +81,33 @@ function extractCreds(req) {
   return creds;
 }
 
+// ── Helper: describe a thrown value as a non-empty, readable string ──────────
+// Some failures (socket resets from Tally, aborted requests, ERPNext rejects)
+// produce an error whose `message` is an empty string, which used to surface in
+// the UI as a bare "Sync failed" with no reason. This never returns "".
+function errText(err) {
+  if (err == null) return "Unknown error";
+  if (typeof err === "string") return err.trim() || "Unknown error";
+
+  const code    = err.code ? `[${err.code}]` : "";
+  const message = typeof err.message === "string" ? err.message.trim() : "";
+
+  // Fallbacks, most informative first. `String(err)` repeats the message
+  // ("Error: socket hang up") and collapses to a bare "Error" when there is no
+  // message at all, so it is strictly the last resort.
+  const fallbacks = [
+    err.syscall ? `${err.syscall}${err.errno ? ` (errno ${err.errno})` : ""}` : "",
+    err.errno ? `errno ${err.errno}` : "",
+    (() => {
+      const s = String(err).trim();
+      return s && s !== "Error" ? s.replace(/^Error:\s*/, "") : "";
+    })(),
+  ];
+
+  const text = [code, message || fallbacks.find(Boolean)].filter(Boolean).join(" ").trim();
+  return text || "Unknown error";
+}
+
 // ── Helper: resolve the effective ERPNext URL for state keying ────────────────
 // FIX: every sync route calls this so the state key is always scoped to the
 // specific ERPNext instance being targeted — not shared across accounts.
@@ -125,7 +152,7 @@ function finishJob(id, result) {
 
 function failJob(id, error) {
   const job = jobs.get(id);
-  if (job) Object.assign(job, { status: "failed", error: error.message || String(error), finishedAt: new Date().toISOString() });
+  if (job) Object.assign(job, { status: "failed", error: errText(error), finishedAt: new Date().toISOString() });
 }
 
 const cancelledJobs = new Set();
@@ -180,7 +207,7 @@ router.get("/tally/ping", async (_req, res) => {
   try {
     res.json(await pingTally());
   } catch (err) {
-    res.status(500).json({ connected: false, error: err.message });
+    res.status(500).json({ connected: false, error: errText(err) });
   }
 });
 
@@ -190,8 +217,8 @@ router.get("/tally/companies", async (_req, res) => {
     const data = await fetchTallyCompanies();
     res.json({ ok: true, count: data.length, data });
   } catch (err) {
-    logger.error("Failed to fetch companies", { error: err.message });
-    res.status(500).json({ ok: false, error: err.message });
+    logger.error("Failed to fetch companies", { error: errText(err) });
+    res.status(500).json({ ok: false, error: errText(err) });
   }
 });
 
@@ -206,8 +233,8 @@ router.get("/tally/groups", async (req, res) => {
     const data = await fetchTallyGroups(company);
     res.json({ ok: true, count: data.length, data });
   } catch (err) {
-    logger.error("Failed to fetch groups", { error: err.message });
-    res.status(500).json({ ok: false, error: err.message });
+    logger.error("Failed to fetch groups", { error: errText(err) });
+    res.status(500).json({ ok: false, error: errText(err) });
   }
 });
 
@@ -218,8 +245,8 @@ router.get("/tally/ledgers", async (req, res) => {
     const data = await fetchTallyLedgers(company);
     res.json({ ok: true, count: data.length, data });
   } catch (err) {
-    logger.error("Failed to fetch ledgers", { error: err.message });
-    res.status(500).json({ ok: false, error: err.message });
+    logger.error("Failed to fetch ledgers", { error: errText(err) });
+    res.status(500).json({ ok: false, error: errText(err) });
   }
 });
 
@@ -230,8 +257,8 @@ router.get("/tally/voucher-types", async (req, res) => {
     const data = await fetchTallyVoucherTypes(company);
     res.json({ ok: true, count: data.length, data });
   } catch (err) {
-    logger.error("Failed to fetch voucher types", { error: err.message });
-    res.status(500).json({ ok: false, error: err.message });
+    logger.error("Failed to fetch voucher types", { error: errText(err) });
+    res.status(500).json({ ok: false, error: errText(err) });
   }
 });
 
@@ -242,8 +269,8 @@ router.get("/tally/cost-categories", async (req, res) => {
     const data = await fetchTallyCostCategories(company);
     res.json({ ok: true, count: data.length, data });
   } catch (err) {
-    logger.error("Failed to fetch cost categories", { error: err.message });
-    res.status(500).json({ ok: false, error: err.message });
+    logger.error("Failed to fetch cost categories", { error: errText(err) });
+    res.status(500).json({ ok: false, error: errText(err) });
   }
 });
 
@@ -254,8 +281,8 @@ router.get("/tally/cost-centres", async (req, res) => {
     const data = await fetchTallyCostCentres(company);
     res.json({ ok: true, count: data.length, data });
   } catch (err) {
-    logger.error("Failed to fetch cost centres", { error: err.message });
-    res.status(500).json({ ok: false, error: err.message });
+    logger.error("Failed to fetch cost centres", { error: errText(err) });
+    res.status(500).json({ ok: false, error: errText(err) });
   }
 });
 
@@ -266,8 +293,8 @@ router.get("/tally/currencies", async (req, res) => {
     const data = await fetchTallyCurrencies(company);
     res.json({ ok: true, count: data.length, data });
   } catch (err) {
-    logger.error("Failed to fetch currencies", { error: err.message });
-    res.status(500).json({ ok: false, error: err.message });
+    logger.error("Failed to fetch currencies", { error: errText(err) });
+    res.status(500).json({ ok: false, error: errText(err) });
   }
 });
 
@@ -278,8 +305,8 @@ router.get("/tally/budgets", async (req, res) => {
     const data = await fetchTallyBudgets(company);
     res.json({ ok: true, count: data.length, data });
   } catch (err) {
-    logger.error("Failed to fetch budgets", { error: err.message });
-    res.status(500).json({ ok: false, error: err.message });
+    logger.error("Failed to fetch budgets", { error: errText(err) });
+    res.status(500).json({ ok: false, error: errText(err) });
   }
 });
 
@@ -294,8 +321,8 @@ router.get("/tally/stock-groups", async (req, res) => {
     const data = await fetchTallyStockGroups(company);
     res.json({ ok: true, count: data.length, data });
   } catch (err) {
-    logger.error("Failed to fetch stock groups", { error: err.message });
-    res.status(500).json({ ok: false, error: err.message });
+    logger.error("Failed to fetch stock groups", { error: errText(err) });
+    res.status(500).json({ ok: false, error: errText(err) });
   }
 });
 
@@ -306,8 +333,8 @@ router.get("/tally/stock", async (req, res) => {
     const data = await fetchTallyStockItems(company);
     res.json({ ok: true, count: data.length, data });
   } catch (err) {
-    logger.error("Failed to fetch stock items", { error: err.message });
-    res.status(500).json({ ok: false, error: err.message });
+    logger.error("Failed to fetch stock items", { error: errText(err) });
+    res.status(500).json({ ok: false, error: errText(err) });
   }
 });
 
@@ -318,8 +345,8 @@ router.get("/tally/stock-categories", async (req, res) => {
     const data = await fetchTallyStockCategories(company);
     res.json({ ok: true, count: data.length, data });
   } catch (err) {
-    logger.error("Failed to fetch stock categories", { error: err.message });
-    res.status(500).json({ ok: false, error: err.message });
+    logger.error("Failed to fetch stock categories", { error: errText(err) });
+    res.status(500).json({ ok: false, error: errText(err) });
   }
 });
 
@@ -330,8 +357,8 @@ router.get("/tally/units", async (req, res) => {
     const data = await fetchTallyUnits(company);
     res.json({ ok: true, count: data.length, data });
   } catch (err) {
-    logger.error("Failed to fetch units", { error: err.message });
-    res.status(500).json({ ok: false, error: err.message });
+    logger.error("Failed to fetch units", { error: errText(err) });
+    res.status(500).json({ ok: false, error: errText(err) });
   }
 });
 
@@ -342,8 +369,8 @@ router.get("/tally/godowns", async (req, res) => {
     const data = await fetchTallyGodowns(company);
     res.json({ ok: true, count: data.length, data });
   } catch (err) {
-    logger.error("Failed to fetch godowns", { error: err.message });
-    res.status(500).json({ ok: false, error: err.message });
+    logger.error("Failed to fetch godowns", { error: errText(err) });
+    res.status(500).json({ ok: false, error: errText(err) });
   }
 });
 
@@ -359,8 +386,8 @@ router.get("/tally/vouchers", async (req, res) => {
     const data = await fetchTallyVouchers(company, from, to);
     res.json({ ok: true, count: data.length, data });
   } catch (err) {
-    logger.error("Failed to fetch vouchers", { error: err.message });
-    res.status(500).json({ ok: false, error: err.message });
+    logger.error("Failed to fetch vouchers", { error: errText(err) });
+    res.status(500).json({ ok: false, error: errText(err) });
   }
 });
 
@@ -382,8 +409,8 @@ router.post("/middleware/check", async (req, res) => {
     const report = await runMiddlewareCheck(companyName, { fromDate, toDate });
     res.json({ ok: true, report });
   } catch (err) {
-    logger.error("Middleware check failed", { error: err.message });
-    res.status(500).json({ ok: false, error: err.message });
+    logger.error("Middleware check failed", { error: errText(err) });
+    res.status(500).json({ ok: false, error: errText(err) });
   }
 });
 
@@ -415,11 +442,11 @@ router.post("/erpnext/resolve-company", async (req, res) => {
 // ── GET/POST /erpnext/ping ────────────────────────────────────────────────────
 router.get("/erpnext/ping", async (_req, res) => {
   try { res.json(await pingErpNext()); }
-  catch (err) { res.status(500).json({ connected: false, error: err.message }); }
+  catch (err) { res.status(500).json({ connected: false, error: errText(err) }); }
 });
 router.post("/erpnext/ping", async (req, res) => {
   try { res.json(await pingErpNext(extractCreds(req))); }
-  catch (err) { res.status(500).json({ connected: false, error: err.message }); }
+  catch (err) { res.status(500).json({ connected: false, error: errText(err) }); }
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -456,11 +483,11 @@ router.post("/sync/ledgers", async (req, res) => {
       // into the ERPNext Bank Account master. Always pass the full allLedgers list
       // so bank ledgers that were unchanged (skipped above) are still updated.
       await syncBankLedgersToErpNext(allLedgers, company, creds);
-      saveCompanyState(company, { ledgerAlterIds: buildAlterIdMap(allLedgers), lastMasterSyncAt: new Date().toISOString() }, erpnextUrl);
+      saveCompanyState(company, { ledgerAlterIds: buildAlterIdMap(allLedgers, "name", result?.failedKeys || []), lastMasterSyncAt: new Date().toISOString() }, erpnextUrl);
       logger.info(`Ledger sync job ${jobId} done`, result);
       finishJob(jobId, result);
     } catch (err) {
-      logger.error(`Ledger sync job ${jobId} failed: ${err.message}`);
+      logger.error(`Ledger sync job ${jobId} failed: ${errText(err)}`);
       failJob(jobId, err);
     }
   })();
@@ -490,7 +517,7 @@ router.post("/sync/smart-ledgers", async (req, res) => {
       await syncBankLedgersToErpNext(allLedgers, companyName, creds);
       finishJob(jobId, result);
     } catch (err) {
-      logger.error(`Smart Ledger sync job ${jobId} failed: ${err.message}`);
+      logger.error(`Smart Ledger sync job ${jobId} failed: ${errText(err)}`);
       failJob(jobId, err);
     }
   })();
@@ -520,10 +547,10 @@ router.post("/sync/stock", async (req, res) => {
         return;
       }
       const result = await syncStockToErpNext(toSync, creds);
-      saveCompanyState(company, { stockAlterIds: buildAlterIdMap(allStock), lastMasterSyncAt: new Date().toISOString() }, erpnextUrl);
+      saveCompanyState(company, { stockAlterIds: buildAlterIdMap(allStock, "name", result?.failedKeys || []), lastMasterSyncAt: new Date().toISOString() }, erpnextUrl);
       finishJob(jobId, result);
     } catch (err) {
-      logger.error(`Stock sync job ${jobId} failed: ${err.message}`);
+      logger.error(`Stock sync job ${jobId} failed: ${errText(err)}`);
       failJob(jobId, err);
     }
   })();
@@ -558,7 +585,7 @@ router.post("/sync/vouchers", async (req, res) => {
       saveCompanyState(companyName, { lastVoucherSyncDate: effTo, lastMasterSyncAt: new Date().toISOString() }, erpnextUrl);
       finishJob(jobId, result);
     } catch (err) {
-      logger.error(`Voucher sync job ${jobId} failed: ${err.message}`);
+      logger.error(`Voucher sync job ${jobId} failed: ${errText(err)}`);
       failJob(jobId, err);
     }
   })();
@@ -588,10 +615,10 @@ router.post("/sync/godowns", async (req, res) => {
         return;
       }
       const result = await syncGodownsToErpNext(toSync, company, creds);
-      saveCompanyState(company, { godownAlterIds: buildAlterIdMap(allGodowns), lastMasterSyncAt: new Date().toISOString() }, erpnextUrl);
+      saveCompanyState(company, { godownAlterIds: buildAlterIdMap(allGodowns, "name", result?.failedKeys || []), lastMasterSyncAt: new Date().toISOString() }, erpnextUrl);
       finishJob(jobId, result);
     } catch (err) {
-      logger.error(`Godown sync job ${jobId} failed: ${err.message}`);
+      logger.error(`Godown sync job ${jobId} failed: ${errText(err)}`);
       failJob(jobId, err);
     }
   })();
@@ -620,7 +647,7 @@ router.post("/sync/opening-balances", async (req, res) => {
       const result = await syncOpeningBalancesToErpNext(ledgers, company, creds);
       finishJob(jobId, result);
     } catch (err) {
-      logger.error(`Opening balance sync job ${jobId} failed: ${err.message}`);
+      logger.error(`Opening balance sync job ${jobId} failed: ${errText(err)}`);
       failJob(jobId, err);
     }
   })();
@@ -650,10 +677,10 @@ router.post("/sync/cost-centres", async (req, res) => {
         return;
       }
       const result = await syncCostCentresToErpNext(toSync, company, creds);
-      saveCompanyState(company, { costCentreAlterIds: buildAlterIdMap(allCostCentres), lastMasterSyncAt: new Date().toISOString() }, erpnextUrl);
+      saveCompanyState(company, { costCentreAlterIds: buildAlterIdMap(allCostCentres, "name", result?.failedKeys || []), lastMasterSyncAt: new Date().toISOString() }, erpnextUrl);
       finishJob(jobId, result);
     } catch (err) {
-      logger.error(`Cost centre sync job ${jobId} failed: ${err.message}`);
+      logger.error(`Cost centre sync job ${jobId} failed: ${errText(err)}`);
       failJob(jobId, err);
     }
   })();
@@ -676,7 +703,7 @@ router.post("/sync/invoices", async (req, res) => {
       const result   = await syncInvoicesToErpNext(vouchers, companyName, creds);
       finishJob(jobId, result);
     } catch (err) {
-      logger.error(`Invoice sync job ${jobId} failed: ${err.message}`);
+      logger.error(`Invoice sync job ${jobId} failed: ${errText(err)}`);
       failJob(jobId, err);
     }
   })();
@@ -963,7 +990,7 @@ newAlterIds.ledgerAlterIds = buildAlterIdMap(allLedgers);
       }
       finishJob(jobId, result);
     } catch (err) {
-      logger.error(`Full sync job ${jobId} failed: ${err.message}`);
+      logger.error(`Full sync job ${jobId} failed: ${errText(err)}`);
       failJob(jobId, err);
     }
   })();
@@ -985,7 +1012,7 @@ router.post("/sync/chart-of-accounts", async (req, res) => {
       const result = await syncChartOfAccountsToErpNext(groups, company, creds);
       finishJob(jobId, result);
     } catch (err) {
-      logger.error(`Chart of Accounts sync job ${jobId} failed: ${err.message}`);
+      logger.error(`Chart of Accounts sync job ${jobId} failed: ${errText(err)}`);
       failJob(jobId, err);
     }
   })();
@@ -1007,7 +1034,7 @@ router.post("/sync/taxes", async (req, res) => {
       const result     = await syncTaxesToErpNext(stockItems, company, creds);
       finishJob(jobId, result);
     } catch (err) {
-      logger.error(`Tax sync job ${jobId} failed: ${err.message}`);
+      logger.error(`Tax sync job ${jobId} failed: ${errText(err)}`);
       failJob(jobId, err);
     }
   })();

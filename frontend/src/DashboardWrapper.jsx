@@ -5,6 +5,7 @@ import { MiddlewareCheck } from "./pages/MiddlewareCheck";
 import { LiveLogs } from "./pages/LiveLogs";
 import { SettingsPage } from "./pages/SettingsPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { APP_VERSION_SHORT } from "./version";
 
 const NAV = [
 
@@ -213,7 +214,7 @@ export default function DashboardWrapper({ companies, onRefresh, selectedCompany
               fontSize: 9.5, color: "rgba(255,255,255,0.32)",
               letterSpacing: "0.06em",
             }}>
-              v1.0 · online
+              {APP_VERSION_SHORT} · online
             </span>
           </div>
         </div>

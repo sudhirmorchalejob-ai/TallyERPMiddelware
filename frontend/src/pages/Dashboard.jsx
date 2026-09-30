@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { SyncToErpNext } from "./SyncToErpNext";
 
-const BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
+import { API_BASE as BASE_URL } from "../apiBase";
+import { APP_VERSION_SHORT } from "../version";
 
 const C = {
   card:"#ffffff", surface:"#f8f9fc", bg:"#eef0f6", border:"#e4e7ef", borderH:"#c8cedd",
@@ -203,7 +204,7 @@ export default function Dashboard() {
               width:7, height:7, borderRadius:"50%", background:C.green, flexShrink:0,
               boxShadow:`0 0 8px ${C.green}`,
             }}/>
-            <span style={{ fontFamily:C.mono, fontSize:9, color:"rgba(255,255,255,.3)", letterSpacing:"0.06em" }}>v1.0 · online</span>
+            <span style={{ fontFamily:C.mono, fontSize:9, color:"rgba(255,255,255,.3)", letterSpacing:"0.06em" }}>{APP_VERSION_SHORT} · online</span>
           </div>
         </div>
       </aside>

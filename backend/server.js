@@ -47,8 +47,39 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).send({ status: 400, message: err.message });
+  }
+  next();
+});
 app.use("/api", router);
 app.use("/api", licenseRoute);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BUILD IDENTITY — read by electron.cjs before it attaches to a backend.
+//
+// The shell and the backend ship as two separate binaries, and the shell has to
+// be able to tell "my backend" apart from "some other program that happens to
+// be listening on this port". BUILD_ID is baked in at package time from a hash
+// of the sources that produced the build (see build.mjs), so a different build
+// can never report the same id.
+// ─────────────────────────────────────────────────────────────────────────────
+app.get("/api/build", (_req, res) => {
+  res.json({
+    ok: true,
+    app: "tally-erpnext-integration",
+    version: process.env.MIDDLEWARE_APP_VERSION || "dev",
+    buildId: process.env.MIDDLEWARE_BUILD_ID || "dev",
+    packaged: !!process.pkg,
+  });
+});
+
+// NOTE: the terminal 404 for unknown /api routes is registered further down, just
+// before the static handler. It has to be the LAST /api middleware, not the
+// first: `app.use("/api", ...)` runs for every /api request, so registering the
+// guard here would answer 404 before the auto-sync routes below ever got a
+// chance to run.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AUTO-SYNC CONFIG — persisted to data/auto_sync_config.json
@@ -58,6 +89,7 @@ app.use("/api", licenseRoute);
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -66,7 +98,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Default: a sibling folder "<project>-data" next to your project root.
 // Override by setting DATA_DIR in your .env file.
 // Always write to AppData — works in Electron, PKG exe, and dev.
-const DATA_DIR_DEFAULT = path.join(os.homedir(), "AppData", "Roaming", "Tally ERPNext Integration", "data");
+// NOTE: the folder name is "TallyERPNextIntegration" (no spaces) so it matches
+// logger.js, syncState.js, syncChunkState.js and lmsService.js. It previously
+// used "Tally ERPNext Integration" here and only, which split auto-sync config
+// and sync state across two different folders.
+const DATA_DIR_DEFAULT = path.join(os.homedir(), "AppData", "Roaming", "TallyERPNextIntegration", "data");
 const CONFIG_DIR = process.env.DATA_DIR || DATA_DIR_DEFAULT;
 const CONFIG_FILE = path.join(CONFIG_DIR, "auto_sync_config.json");
 const CREDS_FILE = path.join(CONFIG_DIR, "auto_sync_creds.json");  // gitignore this
@@ -294,37 +330,41 @@ async function runAutoSync(triggeredBy = "interval") {
     let ledgers = [];
     let stockItems = [];
 
+    // Hold the full fetch arrays so we can update Alter IDs AFTER sync
+    let allGroups = [];
+    let allCostCentres = [];
+    let allGodowns = [];
+    let allLedgers = [];
+    let allStock = [];
+
     if (options.syncChartOfAccounts || options.syncOpeningBalances) {
       logger.human.syncStepStarting("Chart of Accounts — reading account groups from Tally");
-      const allGroups = await fetchTallyGroups(companyName);
+      allGroups = await fetchTallyGroups(companyName);
       const { toSync: changedGroups, unchanged: unchangedGroups } =
         filterChangedMasters(allGroups, state.groupAlterIds);
       logger.human.masterSyncResult("Groups", changedGroups.length, unchangedGroups);
       if (changedGroups.length === 0) logger.human.syncStepSkipped("Chart of Accounts", unchangedGroups);
       groups = changedGroups;
-      saveCompanyState(companyName, { groupAlterIds: buildAlterIdMap(allGroups) }, erpnextUrl);
     }
 
     if (options.syncCostCentres) {
       logger.human.syncStepStarting("Cost Centres — reading from Tally");
-      const allCostCentres = await fetchTallyCostCentres(companyName);
+      allCostCentres = await fetchTallyCostCentres(companyName);
       const { toSync: changedCostCentres, unchanged: unchangedCostCentres } =
         filterChangedMasters(allCostCentres, state.costCentreAlterIds);
       logger.human.masterSyncResult("Cost Centres", changedCostCentres.length, unchangedCostCentres);
       if (changedCostCentres.length === 0) logger.human.syncStepSkipped("Cost Centres", unchangedCostCentres);
       costCentres = changedCostCentres;
-      saveCompanyState(companyName, { costCentreAlterIds: buildAlterIdMap(allCostCentres) }, erpnextUrl);
     }
 
     if (options.syncGodowns) {
       logger.human.syncStepStarting("Godowns — reading warehouses from Tally");
-      const allGodowns = await fetchTallyGodowns(companyName);
+      allGodowns = await fetchTallyGodowns(companyName);
       const { toSync: changedGodowns, unchanged: unchangedGodowns } =
         filterChangedMasters(allGodowns, state.godownAlterIds);
       logger.human.masterSyncResult("Godowns", changedGodowns.length, unchangedGodowns);
       if (changedGodowns.length === 0) logger.human.syncStepSkipped("Godowns", unchangedGodowns);
       godowns = changedGodowns;
-      saveCompanyState(companyName, { godownAlterIds: buildAlterIdMap(allGodowns) }, erpnextUrl);
     }
 
     if (options.syncLedgers || options.syncOpeningBalances || options.syncSmartLedgers) {
@@ -332,7 +372,7 @@ async function runAutoSync(triggeredBy = "interval") {
         ? "Smart Ledgers — reading all ledgers from Tally (will filter by voucher usage)"
         : "Ledgers — reading from Tally";
       logger.human.syncStepStarting(stepLabel);
-      const allLedgers = await fetchTallyLedgers(companyName);
+      allLedgers = await fetchTallyLedgers(companyName);
       const { toSync: changedLedgers, unchanged: unchangedLedgers } =
         filterChangedMasters(allLedgers, state.ledgerAlterIds);
       logger.human.masterSyncResult("Ledgers", changedLedgers.length, unchangedLedgers);
@@ -341,18 +381,16 @@ async function runAutoSync(triggeredBy = "interval") {
       // For smart-ledger-only mode pass the full list so runFullSync filters by
       // voucher usage. For regular ledger sync pass only changed ones (incremental).
       ledgers = (options.syncSmartLedgers && !options.syncLedgers) ? allLedgers : changedLedgers;
-      saveCompanyState(companyName, { ledgerAlterIds: buildAlterIdMap(allLedgers) }, erpnextUrl);
     }
 
     if (options.syncStock || options.syncTaxes) {
       logger.human.syncStepStarting("Stock Items — reading from Tally");
-      const allStock = await fetchTallyStockItems(companyName);
+      allStock = await fetchTallyStockItems(companyName);
       const { toSync: changedStock, unchanged: unchangedStock } =
         filterChangedMasters(allStock, state.stockAlterIds);
       logger.human.masterSyncResult("Stock Items", changedStock.length, unchangedStock);
       if (changedStock.length === 0) logger.human.syncStepSkipped("Stock Items", unchangedStock);
       stockItems = changedStock;
-      saveCompanyState(companyName, { stockAlterIds: buildAlterIdMap(allStock) }, erpnextUrl);
     }
 
     // ── 2. VOUCHERS — incremental or first-sync chunked ─────────────────────
@@ -410,10 +448,18 @@ async function runAutoSync(triggeredBy = "interval") {
       const vouchersWereRequested = options.syncVouchers || options.syncInvoices || options.syncSmartLedgers;
       const shouldSaveVoucherDate = !vouchersWereRequested || voucherStepOk || vouchers.length > 0;
 
+      const newAlterIds = {};
+      if (allGroups.length) newAlterIds.groupAlterIds = buildAlterIdMap(allGroups, "name", result.steps?.chartOfAccounts?.failedKeys || []);
+      if (allCostCentres.length) newAlterIds.costCentreAlterIds = buildAlterIdMap(allCostCentres, "name", result.steps?.costCentres?.failedKeys || []);
+      if (allGodowns.length) newAlterIds.godownAlterIds = buildAlterIdMap(allGodowns, "name", result.steps?.godowns?.failedKeys || []);
+      if (allLedgers.length) newAlterIds.ledgerAlterIds = buildAlterIdMap(allLedgers, "name", result.steps?.ledgers?.failedKeys || []);
+      if (allStock.length) newAlterIds.stockAlterIds = buildAlterIdMap(allStock, "name", result.steps?.stockItems?.failedKeys || []);
+
       saveCompanyState(companyName, {
         // Only advance the voucher checkpoint if vouchers actually synced
         ...(shouldSaveVoucherDate ? { lastVoucherSyncDate: toDate } : {}),
         lastMasterSyncAt: now.toISOString(),
+        ...newAlterIds
       }, erpnextUrl);
       logger.human.stateSaved(companyName);
 
@@ -734,30 +780,119 @@ if (_autoSyncConfig.enabled) {
 
 
 
-// ── Serve bundled React frontend ─────────────────────────────────────────────────────
-// In the EXE, the frontend-build folder sits next to the executable.
-// process.pkg is set by pkg at runtime; falls back to __dirname for dev.
-// ── Serve bundled React frontend ─────────────────────────────────────────────────────
-const FRONTEND_BUILD = path.join(
-  process.env.FRONTEND_DIR || (process.pkg ? path.dirname(process.execPath) : __dirname),
-  "frontend-build"
-);
+// ── Unknown API routes must 404 as JSON, not fall through to the SPA ─────────
+// Registered LAST among the /api middleware, immediately before the static
+// handler, so every real API route above gets first refusal.
+//
+// Without it an unmatched GET /api/... reached the SPA catch-all below and got
+// index.html back with HTTP 200, so the browser ran res.json() on
+// "<!doctype html>..." and threw a parse error that surfaced as a meaningless
+// "routes not found" message instead of a clear 404.
+app.use("/api", (_req, res) => {
+  res.status(404).json({
+    ok: false,
+    error: `No API route for ${_req.method} ${_req.originalUrl}`,
+    buildId: process.env.MIDDLEWARE_BUILD_ID || "dev",
+  });
+});
 
-// TEMP DEBUG — remove after fixing
-console.log("=== DEBUG ===");
-console.log("FRONTEND_DIR env:", process.env.FRONTEND_DIR);
-console.log("process.pkg:", !!process.pkg);
-console.log("process.execPath:", process.execPath);
-console.log("Resolved FRONTEND_BUILD:", FRONTEND_BUILD);
-console.log("Exists:", fs.existsSync(FRONTEND_BUILD));
-console.log("=============");
+// ── Serve bundled React frontend ─────────────────────────────────────────────────────
+// In the packaged app the folder sits next to the backend executable, and
+// electron.cjs tells us where that is via FRONTEND_DIR. The fallbacks below
+// cover the cases where it is not set: running the bare EXE by hand, and
+// running from source.
+//
+// This used to resolve a single path and silently do nothing if it was missing.
+// That silence was the other half of the "routes not found" report — with no
+// frontend-build the app still bound the port, still answered /api/*, but GET /
+// returned Express's default "Cannot GET /", so the window showed a bare
+// routes-not-found page. It now reports the problem loudly instead.
+function frontendCandidates() {
+  return [
+    process.env.FRONTEND_DIR,
+    // Packaged: frontend-build sits beside the exe inside resources/backend.
+    process.pkg ? path.join(path.dirname(process.execPath), "frontend-build") : null,
+    // Packaged, launched directly by hand from its own folder.
+    process.pkg ? path.join(path.dirname(process.execPath), "..", "frontend-build") : null,
+    // Dev: backend/frontend-build
+    path.join(__dirname, "frontend-build"),
+    // Dev: backend/dist/frontend-build (where build.mjs stages it)
+    path.join(__dirname, "dist", "frontend-build"),
+  ].filter(Boolean);
+}
 
-if (fs.existsSync(FRONTEND_BUILD)) {
+function resolveFrontendDir() {
+  for (const dir of frontendCandidates()) {
+    if (fs.existsSync(path.join(dir, "index.html"))) return dir;
+  }
+  return null;
+}
+
+const FRONTEND_BUILD = resolveFrontendDir();
+
+if (FRONTEND_BUILD) {
   app.use(express.static(FRONTEND_BUILD));
-  app.get("*", (_req, res) => {
+  // SPA fallback. Only for GET, and only for non-API paths, so a missing API
+  // route can never be answered with the HTML shell.
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api/")) return next();
     res.sendFile(path.join(FRONTEND_BUILD, "index.html"));
   });
+} else {
+  const msg =
+    "The user interface could not be found (no frontend-build/index.html). " +
+    "The API is running, but there is no screen to show.";
+  console.error(
+    `\n${msg}\nLooked in:\n` +
+      frontendCandidates().map((d) => `  - ${d}`).join("\n") +
+      "\n"
+  );
+  // A bare JSON 503 beats Express's default HTML "Cannot GET /" page: it names
+  // the actual problem instead of looking like a broken route.
+  app.get("/", (_req, res) => res.status(503).json({ ok: false, error: msg }));
 }
+
+// ── Launch the user interface ─────────────────────────────────────────────────
+// The shipped EXE is a headless server: double-clicking it starts Express and
+// (before this existed) nothing visible happened, so the customer got no window
+// and no way to reach the login screen. Open the default browser at the UI once
+// the socket is actually bound.
+//
+// Opt out with OPEN_BROWSER=0 (or NO_BROWSER=1). Dev is left alone because the
+// CRA dev server on :3000 is the surface being worked on there.
+function openUiInBrowser(url) {
+  try {
+    let cmd, args;
+    if (process.platform === "win32") {
+      // The empty "" is the window title `start` would otherwise steal from the
+      // URL. Without it Windows opens a cmd window titled after the address.
+      cmd = "cmd";
+      args = ["/c", "start", "", url];
+    } else if (process.platform === "darwin") {
+      cmd = "open";
+      args = [url];
+    } else {
+      cmd = "xdg-open";
+      args = [url];
+    }
+    // detached + unref so the browser never becomes a child this process
+    // waits on, and so closing the app does not take the browser with it.
+    const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+    child.on("error", (e) =>
+      logger.warn(`Could not open the browser automatically (${e.message}). Open ${url} manually.`)
+    );
+    child.unref();
+    logger.info(`[UI] Opened ${url} in the default browser`);
+  } catch (e) {
+    logger.warn(`Could not open the browser automatically (${e.message}). Open ${url} manually.`);
+  }
+}
+
+const _uiUrl = `http://localhost:${config.port}`;
+const _shouldOpenUi =
+  !/^(0|false|no)$/i.test(String(process.env.OPEN_BROWSER ?? "")) &&
+  !/^(1|true)$/i.test(String(process.env.NO_BROWSER ?? "")) &&
+  !!(process.pkg || String(process.env.OPEN_BROWSER ?? "").toLowerCase() === "1");
 
 app.listen(config.port, () => {
   // logger.human.serverReady removed
@@ -768,5 +903,28 @@ app.listen(config.port, () => {
       'Auto-sync is off. You can turn it on from the Sync settings page and choose how often it should run.'
     );
   }
+  if (_shouldOpenUi) {
+    // Small delay so the browser's first request does not race the socket.
+    setTimeout(() => openUiInBrowser(_uiUrl), 400);
+  } else {
+    logger.info(`[UI] Serving the interface at ${_uiUrl}`);
+  }
+});
+
+// A busy port is the single most common reason a customer sees "nothing
+// happens". Fail with an explanation instead of an unhandled crash.
+app.on("error", (err) => {
+  if (err && err.code === "EADDRINUSE") {
+    const msg =
+      `Port ${config.port} is already in use, so the app could not start.\n` +
+      `Another copy of TallyERP Integration is probably already running — ` +
+      `check the taskbar, or close it and try again.\n` +
+      `If something unrelated is using that port, set PORT to a free one in the .env file.`;
+    logger.error(`[STARTUP] ${msg}`);
+    console.error(`\n${msg}\n`);
+  } else {
+    logger.error(`[STARTUP] ${err && err.message ? err.message : err}`);
+  }
+  process.exit(1);
 });
 // Trigger restart

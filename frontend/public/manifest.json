@@ -1,6 +1,6 @@
 {
-  "short_name": "Tally ⇄ ERPNext",
-  "name": "Tally ⇄ ERPNext Middleware Dashboard",
+  "short_name": "TallyERP Integration",
+  "name": "TallyERP Integration Dashboard",
   "icons": [
     {
       "src": "favicon.svg",

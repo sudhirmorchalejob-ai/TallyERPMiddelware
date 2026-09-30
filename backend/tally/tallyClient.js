@@ -14,24 +14,26 @@
  */
 
 import axios from "axios";
-import Agent from "agentkeepalive";
 import { parseStringPromise } from "xml2js";
 import { config } from "../config/config.js";
 import { logger } from "../logs/logger.js";
 
-// ── HTTP agent with keep-alive for localhost Tally ────────────────────────────
-const httpAgent = new Agent({
-  maxSockets: 10,
-  maxFreeSockets: 5,
-  timeout: 600_000,          // 10 min — matches agent.cjs
-  freeSocketTimeout: 30_000,
-});
-
+// ── HTTP client for Tally ──────────────────────────────────────────────────────
+// Keep-alive is deliberately DISABLED.
+//
+// TallyPrime's HTTP server closes the connection after every response and does
+// not send a `Connection: keep-alive` header. When a keep-alive agent is used,
+// the first POST succeeds, the pooled socket is left in the free list, and
+// Tally silently drops it. The *next* POST is handed that already-dead socket,
+// which fails with `ECONNRESET` / "socket hang up" — surfacing to the user as a
+// random "Sync failed" on roughly every second call, and never on the dev
+// machine in a different code path. Forcing `Connection: close` makes every
+// request open a fresh socket, which is what Tally expects.
 const tallyAxios = axios.create({
   baseURL: config.tally.url,
-  headers: { "Content-Type": "text/xml" },
+  headers: { "Content-Type": "text/xml", Connection: "close" },
   timeout: 600_000,          // 10 min — large voucher sets can take several minutes
-  httpAgent,
+  // NOTE: no `httpAgent` here on purpose — see comment above.
 });
 
 // ── XML / value helpers ───────────────────────────────────────────────────────
@@ -233,12 +235,43 @@ export async function pingTally() {
   } catch (err) {
     return {
       connected: false,
-      error:
-        err.code === "ECONNREFUSED"
-          ? `Tally not running on ${config.tally.url}. Open TallyPrime → Gateway of Tally → Enable Tally.NET → HTTP Port 9000.`
-          : err.message,
+      error: describeTallyError(err),
       url: config.tally.url,
     };
+  }
+}
+
+// ── Turn a Tally connection failure into an actionable message ────────────────
+// These are the failures that only ever happen on *some* machines, so the raw
+// error text alone is not enough to diagnose a customer report.
+function describeTallyError(err) {
+  const code = err?.code;
+  const sysMsg = err?.syscall ? `${err.syscall}` : "";
+  const base = [
+    code ? `[${code}]` : "",
+    typeof err?.message === "string" ? err.message.trim() : "",
+    sysMsg,
+  ].filter(Boolean).join(" ");
+
+  // Never let diagnostics throw their own error.
+  let port = 9000;
+  try { port = new URL(config.tally.url).port || 9000; } catch { /* keep default */ }
+
+  switch (code) {
+    case "ECONNREFUSED":
+      return `Cannot reach Tally at ${config.tally.url}. Open TallyPrime → Gateway of Tally → "Enable Tally.NET" and set the HTTP port to ${port}. (Connection refused.)`;
+    case "ECONNRESET":
+    case "EPIPE":
+      return `Tally at ${config.tally.url} closed the connection unexpectedly. This usually means the HTTP port or the "Allow other computers to access" / remote-access setting changed, or Tally is busy. ${base}`.trim();
+    case "ETIMEDOUT":
+    case "ESOCKETTIMEDOUT":
+      return `Timed out waiting for Tally at ${config.tally.url}. Check that TallyPrime is open, responsive, and that the Gateway of Tally HTTP port is correct.`;
+    case "EHOSTUNREACH":
+    case "ENETUNREACH":
+    case "EAI_AGAIN":
+      return `Host in ${config.tally.url} could not be resolved. ${base}`.trim();
+    default:
+      return base || "Could not reach Tally";
   }
 }
 

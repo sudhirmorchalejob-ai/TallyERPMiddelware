@@ -1,6 +1,6 @@
 {
   "name": "tally-middleware-backend",
-  "version": "1.0.0",
+  "version": "3.0.0",
   "type": "module",
   "private": true,
   "main": "electron.cjs",
@@ -16,8 +16,10 @@
     "xml2js": "^0.6.2"
   },
   "devDependencies": {
+    "app-builder-bin": "^5.0.0-alpha.12",
     "electron": "^36.0.0",
     "electron-builder": "^26.0.0",
+    "electron-packager": "^17.1.2",
     "esbuild": "^0.28.0",
     "nodemon": "^3.0.0",
     "pkg": "^5.8.1"
@@ -27,14 +29,14 @@
     "dev": "nodemon server.js",
     "test": "node tests/license_verification.test.mjs",
     "electron": "electron electron.cjs",
-    "build:exe": "node build.mjs"
+    "build:exe": "node build.mjs",
+    "build:app": "node build.mjs && electron-builder --win --x64",
+    "build:clean": "node -e \"require('fs').rmSync('electron-dist',{recursive:true,force:true});require('fs').rmSync('dist',{recursive:true,force:true})\" && npm run build:app"
   },
   "pkg": {
     "assets": [
       "node_modules/**/*",
       "config/**/*",
-      "data/**/*",
-      "logs/**/*",
       "routes/**/*",
       "tally/**/*",
       "syncState.js",
@@ -48,7 +50,7 @@
   },
   "build": {
     "appId": "com.tally.erpnext.integration",
-    "productName": "Tally ERPNext Integration",
+    "productName": "TallyERP Integration",
     "directories": {
       "output": "electron-dist"
     },
@@ -60,12 +62,20 @@
       {
         "from": "dist",
         "to": "backend",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
-      "target": ["portable", "nsis"],
-      "icon": "assets/icon.png"
+      "target": [
+        "portable",
+        "nsis"
+      ],
+      "icon": "assets/icon.png",
+      "signExts": null,
+      "signAndEditExecutable": false,
+      "forceCodeSigning": false
     },
     "nsis": {
       "oneClick": false,

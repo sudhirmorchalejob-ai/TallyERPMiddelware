@@ -4,7 +4,7 @@
  * Place this at: src/api/tallyAPI.js
  */
 
-const BASE = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
+import { API_BASE as BASE } from "../apiBase";
 
 async function req(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {

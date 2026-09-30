@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-const BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
+import { API_BASE as BASE_URL } from "../apiBase";
 const TODAY    = new Date().toISOString().slice(0, 10);
 
 const C = {

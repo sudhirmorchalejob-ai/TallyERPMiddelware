@@ -15,6 +15,7 @@
 import https from 'https';
 import http from 'http';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { logger } from '../logs/logger.js';
 
@@ -53,14 +54,31 @@ function productIdQuery() {
 
 const HEARTBEAT_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 
-// ADD these instead:
-import { fileURLToPath } from 'url';
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// ── Cache location ─────────────────────────────────────────────────────────────
+// FIX: these used to be `path.join(__dirname, '../logs/...')`. That resolves to
+// the real project folder when run from source, but inside the packaged EXE
+// __dirname is PKG's read-only virtual filesystem (C:\snapshot\backend), so
+// every save died with "Cannot mkdir in a snapshot" and a successful login was
+// never remembered. That is why the app looked reliable for the developer
+// (cache worked) and unreliable for customers (cache never worked, so every
+// single login hit Licentic's flaky endpoint).
+//
+// Caches now live in AppData alongside the other writable state, using the SAME
+// folder name as logger.js / syncState.js / syncChunkState.js.
+const LMS_CACHE_DIR = path.join(
+  os.homedir(), 'AppData', 'Roaming', 'TallyERPNextIntegration', 'logs'
+);
 
-const LICENSE_CACHE_PATH = path.join(__dirname, '../logs/license-cache.json');
-const REGISTRY_CACHE_PATH = path.join(__dirname, '../logs/feature-registry-cache.json');
-const USAGE_CACHE_PATH = path.join(__dirname, '../logs/usage-cache.json');
+const LICENSE_CACHE_PATH = path.join(LMS_CACHE_DIR, 'license-cache.json');
+const REGISTRY_CACHE_PATH = path.join(LMS_CACHE_DIR, 'feature-registry-cache.json');
+const USAGE_CACHE_PATH = path.join(LMS_CACHE_DIR, 'usage-cache.json');
+
+// A cached approval is honoured for this long before we re-ask Licentic. This is
+// deliberately generous: the upstream endpoint intermittently 404s
+// ("User not found") for real licence holders, and re-asking on every launch
+// meant a transient upstream glitch locked a paying customer out of their app.
+// Expiry of the LICENCE itself is still enforced separately in loadLicenseCache.
+const CACHE_GRACE_MS = 12 * 60 * 60 * 1000; // 12 hours
 
 import { createRequire } from 'module';
 const _require = createRequire(import.meta.url);
@@ -159,8 +177,11 @@ function saveLicenseCache(info) {
  * this product and has not expired. Without those guards a cached approval for
  * one customer could be handed to another - the cache is never allowed to turn
  * an unlicensed email into a licensed one.
+ *
+ * `withinGraceMs` additionally requires the cache to be younger than that, so a
+ * stale approval is refreshed from the LMS rather than trusted indefinitely.
  */
-function loadLicenseCache(email) {
+function loadLicenseCache(email, withinGraceMs = 0) {
   try {
     if (!fs.existsSync(LICENSE_CACHE_PATH)) return null;
     const cache = JSON.parse(fs.readFileSync(LICENSE_CACHE_PATH, 'utf8'));
@@ -171,13 +192,19 @@ function loadLicenseCache(email) {
       if (String(cache.customerEmail || '').trim().toLowerCase() !== wanted) return null;
     }
 
-    const requiredProduct = String(process.env.LMS_PRODUCT_ID || '').trim();
+    const requiredProduct = String(PRODUCT_ID || '').trim();
     if (requiredProduct && String(cache.productId || '').trim() !== requiredProduct) return null;
 
     if (cache.endDate) {
       const exp = new Date(cache.endDate).getTime();
       if (Number.isNaN(exp) || exp < Date.now()) return null;   // expired cache is no cache
     }
+
+    if (withinGraceMs > 0) {
+      const at = new Date(cache.cachedAt).getTime();
+      if (Number.isNaN(at) || Date.now() - at > withinGraceMs) return null;
+    }
+
     return cache;
   } catch { return null; }
 }
@@ -349,17 +376,31 @@ function parseFeatures(featuresArray = [], registry = null) {
 async function fetchActiveLicense(normalizedEmail) {
   const query = productIdQuery();
   const encoded = encodeURIComponent(normalizedEmail);
-  const TRANSIENT_RETRIES = 2;
+
+  // Licentic intermittently answers 404 "User not found" for customers who DO
+  // hold a licence. Observed in the field: the same address was approved at
+  // 09:24 and rejected at 09:29 from the same machine and same product. The
+  // previous budget (3 tries inside ~1.5s) was exhausted by the glitch and the
+  // customer was then told they had no licence. Retry patiently, but keep the
+  // whole sequence short enough that the browser is still waiting.
+  const TRANSIENT_RETRIES = 4;
+  const BACKOFF_BASE_MS = 500;
+  const BACKOFF_MAX_MS = 3000;   // cap: 500 + 1000 + 2000 + 3000 = ~6.5s worst case
 
   const order = _resolvedLicensePath
     ? [_resolvedLicensePath, ...ACTIVE_LICENSE_PATH_CANDIDATES.filter((p) => p !== _resolvedLicensePath)]
     : ACTIVE_LICENSE_PATH_CANDIDATES;
 
   let lastRouteAbsent = null;
+  // Set when a route that clearly EXISTS answers with a business-level miss.
+  // This is what separates "Licentic is glitching" from "Licentic has no such
+  // endpoint", and it must not be overwritten by a later candidate path that
+  // happens to be unregistered.
+  let transientMisses = 0;
+  let lastTransientMsg = null;
 
   for (const path of order) {
     const endpoint = `${path}/${encoded}${query}`;
-    let transientMisses = 0;
 
     for (let attempt = 0; attempt <= TRANSIENT_RETRIES; attempt++) {
       let status, data;
@@ -403,16 +444,35 @@ async function fetchActiveLicense(normalizedEmail) {
       // intermittently for real licence holders, so retry before rejecting.
       if (status === 404) {
         transientMisses++;
+        lastTransientMsg = msg;
         if (attempt < TRANSIENT_RETRIES) {
-          logger.warn(`[LMS] Licentic reported "${msg}" --- retrying (${attempt + 1}/${TRANSIENT_RETRIES})`);
-          await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+          const wait = Math.min(BACKOFF_BASE_MS * Math.pow(2, attempt), BACKOFF_MAX_MS);
+          logger.warn(
+            `[LMS] Licentic reported "${msg}" --- transient, retrying ` +
+            `(attempt ${attempt + 1}/${TRANSIENT_RETRIES}) in ${wait}ms`
+          );
+          await new Promise((r) => setTimeout(r, wait));
           continue;
         }
-        return { rejected: true, reason: msg || 'No active license found for this email', path };
+        break;  // fall through to the shared handling below
       }
 
       return { rejected: true, reason: msg || `No active license found for this email (HTTP ${status})`, path };
     }
+  }
+
+  // A business-level 404 that survived every retry is a Licentic-side glitch far
+  // more often than a genuine "no licence". This takes precedence over
+  // "route absent": the actve-license route demonstrably ran and answered, so the
+  // app must say "could not verify, try again" rather than accusing a paying
+  // customer of having no licence.
+  if (transientMisses > 0) {
+    return {
+      failed: true,
+      reason: lastTransientMsg
+        ? `Licentic could not confirm this licence (upstream returned "${lastTransientMsg}" after ${TRANSIENT_RETRIES + 1} attempts). Please try again in a moment.`
+        : 'Licentic could not confirm this licence. Please try again in a moment.',
+    };
   }
 
   if (lastRouteAbsent) {
@@ -463,6 +523,29 @@ async function validateLicense(customerEmail) {
     if (!requiredProductId) {
       // Without a product we cannot honour "licence must be for Tally ERP Middleware".
       return { valid: false, reason: 'Required product is not configured (LMS_PRODUCT_ID)', customerEmail: normalizedInputEmail };
+    }
+
+    // A previous approval for THIS email, THIS product, unexpired and still
+    // inside the grace window is trusted without re-asking Licentic. Licentic's
+    // endpoint is intermittently flaky, and re-asking on every launch meant a
+    // passing upstream glitch locked a paying customer out of their own app.
+    // The email, product and expiry guards inside loadLicenseCache keep this
+    // from ever approving anyone who is not actually licensed.
+    const cached = loadLicenseCache(normalizedInputEmail, CACHE_GRACE_MS);
+    if (cached && cached.valid === true) {
+      logger.info(
+        `[LMS] Using cached approval for ${maskEmail(normalizedInputEmail)} ` +
+        `(verified ${cached.cachedAt || 'unknown'}) --- skipping Licentic round trip`
+      );
+      _currentLicenseId = cached.licenseId || null;
+      return {
+        ...cached,
+        valid: true,
+        verified: true,
+        verificationFailed: false,
+        fromCache: true,
+        customerEmail: normalizedInputEmail,
+      };
     }
 
     const res = await fetchActiveLicense(normalizedInputEmail);

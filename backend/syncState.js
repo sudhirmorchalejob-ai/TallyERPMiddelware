@@ -182,24 +182,19 @@ export function filterChangedMasters(items, storedAlterIds, keyField = "name") {
     if (!(key in storedAlterIds)) { toSync.push(item); continue; }
     if (storedAlterIds[key] !== alterId) { toSync.push(item); continue; }
 
-    if (key === "Customer6") {
-  console.log("ALTERID CHECK", {
-    key,
-    currentAlterId: alterId,
-    storedAlterId: storedAlterIds[key],
-    same: storedAlterIds[key] === alterId,
-  });
-}
-
     unchanged++;
   }
 
   return { toSync, unchanged };
 }
 
-export function buildAlterIdMap(items, keyField = "name") {
+export function buildAlterIdMap(items, keyField = "name", excludeKeys = []) {
   const map = {};
+  const excludeSet = new Set(excludeKeys);
   for (const item of items) {
+    if (excludeSet.has(item.guid) || excludeSet.has(item.masterID) || excludeSet.has(item.name)) {
+      continue;
+    }
     if (item[keyField] && item.alterId != null) {
       map[item[keyField]] = String(item.alterId);
     }

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { tallyAPI } from "../api/tallyAPI";
+import { API_BASE as BASE_URL } from "../apiBase";
 
 const TODAY = new Date().toISOString().slice(0, 10);
 function getFYStart() {
@@ -8,7 +9,6 @@ function getFYStart() {
   return `${year}-04-01`;
 }
 const YEAR_START = getFYStart();
-const BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
 const ACTIVE_JOB_KEY = "sync_active_job";
 const AUTO_SYNC_OPTS_KEY = "auto_sync_options";
 

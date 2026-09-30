@@ -138,6 +138,7 @@ export function clearCaches() {
   _supplierGroup = null;
   _erpAccountsForRun.clear();
   _territory = null;
+  globalThis._lastLedgerSyncResult = null;
   logger.info("ERPNext client caches cleared for new sync run [erpnextClient v8]");
 }
 
@@ -407,10 +408,10 @@ async function ensureAddress(client, partyName, partyType, ledger) {
     }
   }
 
-  // D: if still no state, skip — do NOT create address without state
+  // D: If no state, we proceed anyway. (ERPNext may accept it if GST is not strict,
+  // or we just want a minimal address record as intended).
   if (!stateVal) {
-    logger.info("[Address] Skipping " + partyName + " — no state available (not in Tally, not in address text, no valid pincode)");
-    return;
+    logger.info("[Address] No state available for " + partyName + " (proceeding with minimal address)");
   }
 
   // ── Step 2: Resolve city ─────────────────────────────────────────────────────
@@ -513,7 +514,7 @@ async function ensureAddress(client, partyName, partyType, ledger) {
           existingName = (await findPartyAddress(client, partyType, partyName)) || (partyName + "-Billing");
           const updateDoc = Object.assign({}, doc, { name: existingName });
           delete updateDoc.links;
-          await client.put("/api/resource/Address/" + encodeURIComponent(existingName), updateDoc).catch(() => { });
+          await client.put("/api/resource/Address/" + encodeURIComponent(existingName), updateDoc);
           createdName = existingName;
         } else {
           throw postErr;
@@ -531,7 +532,8 @@ async function ensureAddress(client, partyName, partyType, ledger) {
       }
     }
   } catch (err) {
-    logger.warn("Address sync skipped for " + partyName + ": " + parseErpError(err));
+    logger.warn("Address sync failed for " + partyName + ": " + parseErpError(err));
+    throw err;
   }
 }
 
@@ -579,7 +581,7 @@ async function ensureContact(client, partyName, partyType, ledger) {
           existingName = (await findPartyContact(client, partyType, partyName)) || partyName;
           const updateDoc = Object.assign({}, doc, { name: existingName });
           delete updateDoc.links;
-          await client.put("/api/resource/Contact/" + encodeURIComponent(existingName), updateDoc).catch(() => { });
+          await client.put("/api/resource/Contact/" + encodeURIComponent(existingName), updateDoc);
           createdName = existingName;
         } else {
           throw postErr;
@@ -597,7 +599,8 @@ async function ensureContact(client, partyName, partyType, ledger) {
       }
     }
   } catch (err) {
-    logger.warn("Contact sync skipped for " + partyName + ": " + parseErpError(err));
+    logger.warn("Contact sync failed for " + partyName + ": " + parseErpError(err));
+    throw err;
   }
 }
 
@@ -1390,11 +1393,13 @@ async function upsert(client, doctype, filters, doc) {
             });
             logger.info(`[RENAME-MERGE] Merged ${doctype} "${existing.name}" into "${targetName}"`);
             existing.name = targetName;
-          } catch (_) {
-            existing.name = targetName;
+          } catch (mergeErr) {
+            logger.warn(`[RENAME-MERGE] Failed to merge ${doctype} "${existing.name}" into "${targetName}": ` + parseErpError(mergeErr));
+            // Do NOT change existing.name if merge failed.
           }
         } else {
           logger.warn(`[RENAME] Note: ${doctype} rename skipped: ` + parseErpError(renameErr));
+          // Do NOT change existing.name if rename failed. Keep the old name so PUT updates it!
         }
       }
     }
@@ -1493,7 +1498,8 @@ async function upsert(client, doctype, filters, doc) {
 async function batchSync(client, doctype, items, mapper, progressCb, postUpsertHook = null) {
   let created = 0, updated = 0, failed = 0, skipped = 0;
   const errors = [];
-  const failedItems = []; // transient failures queued for final pass
+  const transientFailedItems = []; // transient failures queued for final pass
+  const allFailedKeys = []; // collect all failed keys to exclude from state save
 
   for (let i = 0; i < items.length; i += CONCURRENCY) {
     checkCancelled(doctype); // ← stop immediately if user clicked Stop
@@ -1525,9 +1531,10 @@ async function batchSync(client, doctype, items, mapper, progressCb, postUpsertH
           failed++;
           const msg = isDuplicate ? "Duplicate: " + item.name : parseErpError(err);
           errors.push({ item: item.name || (i + j), error: msg });
+          allFailedKeys.push(item.guid || item.masterID || item.name);
           if (errors.length <= 5) logger.warn("ERPNext sync error [" + doctype + "]: " + msg);
         } else {
-          failedItems.push(item); // transient — retry in final pass
+          transientFailedItems.push(item); // transient — retry in final pass
         }
       }
     }
@@ -1542,11 +1549,11 @@ async function batchSync(client, doctype, items, mapper, progressCb, postUpsertH
   }
 
   // Final pass: retry transient failures serially with 2s gap
-  if (failedItems.length > 0) {
-    logger.info("[" + doctype + "] Final pass: retrying " + failedItems.length + " transient failures (serial, 2s gap)");
+  if (transientFailedItems.length > 0) {
+    logger.info("[" + doctype + "] Final pass: retrying " + transientFailedItems.length + " transient failures (serial, 2s gap)");
     _throttle.reset();
     await sleep(5000);
-    for (const item of failedItems) {
+    for (const item of transientFailedItems) {
       const { filters, doc } = await mapper(item);
       try {
         const result = await withRetry(() => upsert(client, doctype, filters, doc), doctype + ":" + item.name + " [final]");
@@ -1558,13 +1565,14 @@ async function batchSync(client, doctype, items, mapper, progressCb, postUpsertH
         const isDuplicate = err.response?.data?.exc_type === "DuplicateEntryError";
         const msg = isDuplicate ? "Duplicate: " + item.name : parseErpError(err);
         errors.push({ item: item.name, error: msg });
+        allFailedKeys.push(item.guid || item.masterID || item.name);
         logger.warn("ERPNext sync error [" + doctype + "] (final pass): " + msg);
       }
       await sleep(2000);
     }
   }
 
-  return { created, updated, skipped, failed, errors: errors.slice(0, 20) };
+  return { created, updated, skipped, failed, errors: errors.slice(0, 20), failedKeys: allFailedKeys };
 }
 
 // -- Ledgers -> Customers / Suppliers -----------------------------------------
@@ -2748,10 +2756,35 @@ export async function syncLedgersToErpNext(
     logger.info("Syncing addresses/contacts for " + partiesWithAddr.length + " parties from Tally");
     for (let i = 0; i < partiesWithAddr.length; i += ADDR_CONCURRENCY) {
       const slice = partiesWithAddr.slice(i, i + ADDR_CONCURRENCY);
-      await Promise.allSettled(slice.map(async ({ l, type }) => {
-        await ensureAddress(client, l.name, type, l);
-        await ensureContact(client, l.name, type, l);
+      const results = await Promise.allSettled(slice.map(async ({ l, type }) => {
+        try {
+          await withRetry(() => ensureAddress(client, l.name, type, l), "Address:" + l.name);
+          await withRetry(() => ensureContact(client, l.name, type, l), "Contact:" + l.name);
+        } catch (err) {
+          throw { l, type, err };
+        }
       }));
+
+      for (const res of results) {
+        if (res.status === "rejected") {
+          const { l, type, err } = res.reason;
+          const msg = parseErpError(err);
+          logger.warn(`[Address/Contact] sync error for ${l.name}: ${msg}`);
+          
+          if (type === "Customer") {
+            customerResults.failed = (customerResults.failed || 0) + 1;
+            if (customerResults.errors.length < 20) customerResults.errors.push({ item: l.name, error: "Address/Contact: " + msg });
+            if (!customerResults.failedKeys) customerResults.failedKeys = [];
+            customerResults.failedKeys.push(l.guid || l.masterID || l.name);
+          } else {
+            supplierResults.failed = (supplierResults.failed || 0) + 1;
+            if (supplierResults.errors.length < 20) supplierResults.errors.push({ item: l.name, error: "Address/Contact: " + msg });
+            if (!supplierResults.failedKeys) supplierResults.failedKeys = [];
+            supplierResults.failedKeys.push(l.guid || l.masterID || l.name);
+          }
+        }
+      }
+      
       await sleep(500); // small pause between address batches
     }
     logger.info("Address/contact sync done");
@@ -2765,7 +2798,12 @@ export async function syncLedgersToErpNext(
     customers: customerResults,
     suppliers: supplierResults,
     accounts: accountResults,
-    skipped
+    skipped,
+    failedKeys: [
+      ...(customerResults.failedKeys || []),
+      ...(supplierResults.failedKeys || []),
+      ...(accountResults.failedKeys || [])
+    ]
   };
 
   globalThis._lastLedgerSyncResult =
@@ -2853,6 +2891,36 @@ async function ensureTallyCustomFields(client) {
       label: "Tally GUID",
       fieldtype: "Data",
       insert_after: "supplier_name",
+      in_list_view: 0,
+      in_standard_filter: 1,
+      read_only: 1,
+    },
+    {
+      dt: "Account",
+      fieldname: "custom_tally_id",
+      label: "Tally GUID",
+      fieldtype: "Data",
+      insert_after: "account_name",
+      in_list_view: 0,
+      in_standard_filter: 1,
+      read_only: 1,
+    },
+    {
+      dt: "Cost Center",
+      fieldname: "custom_tally_id",
+      label: "Tally GUID",
+      fieldtype: "Data",
+      insert_after: "cost_center_name",
+      in_list_view: 0,
+      in_standard_filter: 1,
+      read_only: 1,
+    },
+    {
+      dt: "Warehouse",
+      fieldname: "custom_tally_id",
+      label: "Tally GUID",
+      fieldtype: "Data",
+      insert_after: "warehouse_name",
       in_list_view: 0,
       in_standard_filter: 1,
       read_only: 1,
@@ -3050,7 +3118,7 @@ export async function syncStockToErpNext(stockItems, creds = {}) {
       doctype: "Item",
       item_name: item.name,
       item_code: itemCode,
-      custom_tally_id: item.guid || item.name,
+      custom_tally_id: item.guid || item.masterID || item.name,
       item_group: itemGroup,
       stock_uom: uom,
       is_stock_item: isService ? 0 : 1,
@@ -4454,10 +4522,9 @@ export async function syncChartOfAccountsToErpNext(groups, companyName, creds = 
     return (a.parent || "").localeCompare(b.parent || "");
   });
 
-  let created = 0, updated = 0, failed = 0;
+  let created = 0, updated = 0, failed = 0, skipped = 0;
   const errors = [];
-
-  let skipped = 0;
+  let failedKeys = [];
   for (const group of sorted) {
     try {
       // Strip Tally control chars ( EOT etc.) that survive xml2js and break .trim()
@@ -4572,6 +4639,7 @@ export async function syncChartOfAccountsToErpNext(groups, companyName, creds = 
       await sleep(BATCH_DELAY_MS);
     } catch (err) {
       failed++;
+      failedKeys.push(group.name || group.guid || group.masterID);
       const msg = parseErpError(err);
       if (errors.length < 20) errors.push({ group: group.name, error: msg });
       logger.warn("COA sync error [" + group.name + "]: " + msg);
@@ -4579,7 +4647,7 @@ export async function syncChartOfAccountsToErpNext(groups, companyName, creds = 
   }
 
   logger.success("Chart of Accounts sync done - created: " + created + ", updated: " + updated + ", skipped: " + skipped + ", failed: " + failed);
-  return { created, updated, failed, errors };
+  return { created, updated, failed, errors, failedKeys };
 }
 
 // -- Godowns -> Warehouses ----------------------------------------------------
@@ -4622,6 +4690,7 @@ export async function syncGodownsToErpNext(godowns, companyName, creds = {}) {
       : rootWarehouse;
     const doc = {
       warehouse_name: g.name,
+      custom_tally_id: g.guid || g.masterID || g.name,
       company: companyName,
       is_group: 0,
       parent_warehouse: parentWarehouse,
@@ -5314,6 +5383,7 @@ export async function syncCostCentresToErpNext(costCentres, companyName, creds =
   const results = await batchSync(client, "Cost Center", sorted, (cc) => {
     const doc = {
       cost_center_name: cc.name,
+      custom_tally_id: cc.guid || cc.masterID || cc.name,
       company: companyName,
       is_group: 0,
     };

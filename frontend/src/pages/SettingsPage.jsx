@@ -1,7 +1,7 @@
 // src/pages/SettingsPage.jsx
 import { useState, useEffect } from "react";
 
-const BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
+import { API_BASE as BASE_URL } from "../apiBase";
 
 const C = {
   card: "#ffffff", surface: "#f0f3fa", bg: "#e8edf6", border: "#d8dff0",
@@ -468,9 +468,18 @@ function LicenseSection() {
         setEmailResult({ state: "none", detail: data.reason || "" });
         setEmailError(data.reason || "No active license found for this email.");
       }
-    } catch {
-      setEmailResult({ state: "error", detail: "Could not reach the license service." });
-      setEmailError("Could not reach license server. Please check your internet connection.");
+    } catch (e) {
+      // A network-level failure to even reach our own backend. Say so plainly
+      // instead of implying anything about the licence, which is a separate
+      // question this request never got to answer.
+      console.error("[license] verify request failed", e);
+      setEmailResult({
+        state: "error",
+        detail: "Could not reach the app's local service. Is the app still running?",
+      });
+      setEmailError(
+        "Could not reach the app's local service. Please check your internet connection and make sure the app is still running, then try again."
+      );
     } finally {
       setVerifying(false);
     }
@@ -645,7 +654,7 @@ function LicenseSection() {
                     ? `An active license for ${email.trim().toLowerCase()} was confirmed in Licentic.${emailResult.detail ? ` (${emailResult.detail})` : ""}`
                     : emailResult.state === "error"
                       ? `${emailResult.detail} This is a connection problem, not a missing license.`
-                      : `${email.trim().toLowerCase()} has no active license for Tally ERP Middleware in Licentic.${emailResult.detail ? ` (${emailResult.detail})` : ""}`}
+                      : `${email.trim().toLowerCase()} has no active license for TallyERP Integration in Licentic.${emailResult.detail ? ` (${emailResult.detail})` : ""}`}
                 </p>
               </div>
             </div>

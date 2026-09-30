@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 
-const BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
+import { API_BASE as BASE_URL } from "../apiBase";
 
 // ── Storage helpers ────────────────────────────────────────────────────────
 function getErpUrlForCompany(c) {
