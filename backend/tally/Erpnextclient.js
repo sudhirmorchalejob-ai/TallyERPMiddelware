@@ -2770,7 +2770,7 @@ export async function syncLedgersToErpNext(
           const { l, type, err } = res.reason;
           const msg = parseErpError(err);
           logger.warn(`[Address/Contact] sync error for ${l.name}: ${msg}`);
-          
+
           if (type === "Customer") {
             customerResults.failed = (customerResults.failed || 0) + 1;
             if (customerResults.errors.length < 20) customerResults.errors.push({ item: l.name, error: "Address/Contact: " + msg });
@@ -2784,7 +2784,7 @@ export async function syncLedgersToErpNext(
           }
         }
       }
-      
+
       await sleep(500); // small pause between address batches
     }
     logger.info("Address/contact sync done");
